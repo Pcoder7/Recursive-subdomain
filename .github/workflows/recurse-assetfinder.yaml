@@ -219,7 +219,75 @@ jobs:
           ref: main
       
       # ... (Add identical 'Prepare' and 'Trigger' blocks for Tertiary Account) ...
+      #====================================================================
+      # ADD THE FIRST SLEEP STEP HERE
+      # ====================================================================
+      #- name: Add delay before triggering Tertiary Trigger worker
+       # if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        #run: |
+         # echo "Pausing for 30 seconds to space out worker triggers and avoid platform throttling..."
+          #sleep 30
 
+      - name: Sleep for 20 seconds
+        uses: jakejarvis/wait-action@master
+        with:
+          time: '20s'
+        run: |
+          echo "Pausing for 20 seconds to space out worker triggers and avoid platform throttling..."
+      # ====================================================================
+      
+      - name: Prepare Trigger Payload For Tertiary
+        # This is a NEW step, a copy of the secondary payload step for Account 3.
+        id: prepare_payload_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        shell: bash
+        run: |
+          MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.tertiary_matrix }}'
+          JSON_PAYLOAD=$(jq -cn \
+            --arg run_id "${{ github.run_id }}" \
+            '{
+              "primary_run_id": $run_id
+            }')
+             echo "Constructed JSON Payload: $JSON_PAYLOAD"
+             echo "json_string=$JSON_PAYLOAD" >> "$GITHUB_OUTPUT"
+           
+          JSON_PAYLOAD=$(jq -cn \
+            --arg server_url "${{ github.server_url }}" \
+            --arg repo_owner "${{ github.repository_owner }}" \
+            --arg repo_name "${{ github.event.repository.name }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+            --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
+            '{
+              "primary_github_server_url": $server_url,
+              "primary_repo_owner": $repo_owner,
+              "primary_repo_name": $repo_name,
+              "primary_run_id": $run_id,
+              "chunk_package_artifact_name": $artifact_name,
+              "tertiary_matrix_json": $matrix_as_a_string 
+            }')
+          
+          echo "Constructed JSON Payload: $JSON_PAYLOAD"
+          # Set the constructed JSON string as an output of this step
+          echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+
+      - name: DEBUG - Show Tertiary Inputs String
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        run: |
+          echo "DEBUG: Inputs for TERTIARY account:"
+          # echo "${{ steps.prepare_payload_tertiary.outputs.json_string }}"    
+
+      - name: Trigger Tertiary Account Workflow
+        # This is a NEW step, a copy of the secondary trigger step for Account 3.
+        id: trigger_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: resolve.yml
+          repo: ${{ env.ACCOUNT3_REPO_OWNER }}/${{ env.ACCOUNT3_REPO_NAME }}
+          token: ${{ secrets.PAT_FOR_TERTIARY_ACCOUNT_REPO }}
+          inputs: ${{ steps.prepare_payload_tertiary.outputs.json_string }}
+          ref: main
 
   run_primary_account_enumeration:
     name: Run Recursive Enum (Primary Account)
@@ -301,8 +369,9 @@ jobs:
       - name: Organize and Push to store-recon
         shell: bash
         env:
-          STORE_RECON_PAT: ${{ secrets.STORE_RECON_PAT }}
-          ACCOUNT2_USERNAME: ${{ env.ACCOUNT2_REPO_OWNER }}
+          STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+          STORE: ${{secrets.STORE}}
         run: |
           set -e
           echo "Organizing primary results..."
