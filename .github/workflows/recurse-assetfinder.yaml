@@ -400,7 +400,7 @@ jobs:
         env:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           ACCOUNT2_USERNAME: ${{ secrets.SECONDARY_ACCOUNT_OWNER }}
-          STORE: ${{secrets.STORE}}
+          STORE: ${{ secrets.STORE }}
         run: |
           set -e
           echo "Organizing primary results..."
