@@ -45,7 +45,9 @@ jobs:
         id: create_final_list
         shell: bash
         env:
-          STORE_RECON_PAT: ${{ secrets.STORE_RECON_PAT }} # PAT with access to the store-recon repo
+          STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+          STORE: ${{secrets.STORE}}# PAT with access to the store-recon repo
         run: |
           set -e
           echo "INFO: Performing a fast, shallow clone of the results repository..."
@@ -251,24 +253,24 @@ jobs:
              echo "Constructed JSON Payload: $JSON_PAYLOAD"
              echo "json_string=$JSON_PAYLOAD" >> "$GITHUB_OUTPUT"
            
-          JSON_PAYLOAD=$(jq -cn \
-            --arg server_url "${{ github.server_url }}" \
-            --arg repo_owner "${{ github.repository_owner }}" \
-            --arg repo_name "${{ github.event.repository.name }}" \
-            --arg run_id "${{ github.run_id }}" \
-            --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
-            --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
-            '{
-              "primary_github_server_url": $server_url,
-              "primary_repo_owner": $repo_owner,
-              "primary_repo_name": $repo_name,
-              "primary_run_id": $run_id,
-              "chunk_package_artifact_name": $artifact_name,
-              "tertiary_matrix_json": $matrix_as_a_string 
-            }')
+           JSON_PAYLOAD=$(jq -cn \
+             --arg server_url "${{ github.server_url }}" \
+             --arg repo_owner "${{ github.repository_owner }}" \
+             --arg repo_name "${{ github.event.repository.name }}" \
+             --arg run_id "${{ github.run_id }}" \
+             --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+             --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
+             '{
+               "primary_github_server_url": $server_url,
+               "primary_repo_owner": $repo_owner,
+               "primary_repo_name": $repo_name,
+               "primary_run_id": $run_id,
+               "chunk_package_artifact_name": $artifact_name,
+               "tertiary_matrix_json": $matrix_as_a_string 
+             }')
           
           echo "Constructed JSON Payload: $JSON_PAYLOAD"
-          # Set the constructed JSON string as an output of this step
+             # Set the constructed JSON string as an output of this step
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
 
       - name: DEBUG - Show Tertiary Inputs String
