@@ -328,7 +328,7 @@ jobs:
           mkdir -p "$SUB_CHUNK_DIR"
           
           TOTAL_LINES=$(wc -l < "$CHUNK_FILE_PATH")
-          LINES_PER_SUB_CHUNK=$(echo "scale=0; ($TOTAL_LINES + 4) / 5" | bc)
+          LINES_PER_SUB_CHUNK=$(awk -v t="$TOTAL_LINES" 'BEGIN { print int((t+4)/5) }')
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
 
