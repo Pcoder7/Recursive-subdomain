@@ -10,7 +10,7 @@ permissions:
 env:
   # --- Chunking and Distribution Configuration ---
   LINES_PER_CHUNK: 50             # MODIFIED: As requested for assetfinder seeds
-  DISTRIBUTION_THRESHOLD: 21      # The minimum total chunks to trigger 3-way distribution
+  DISTRIBUTION_THRESHOLD: 8      # The minimum total chunks to trigger 3-way distribution
   PRIMARY_PERCENTAGE: 45          # 45% for the primary account
   SECONDARY_PERCENTAGE: 40        # 40% for the secondary account
 
@@ -324,13 +324,24 @@ jobs:
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             
           fi
+          SUB_CHUNK_DIR="sub-chunks-for-runner"
+          mkdir -p "$SUB_CHUNK_DIR"
           
+          TOTAL_LINES=$(wc -l < "$CHUNK_FILE_PATH")
+          LINES_PER_SUB_CHUNK=$(echo "scale=0; ($TOTAL_LINES + 4) / 5" | bc)
+          echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
+          split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
+
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' > "$RAW_RESULTS_FILE"
+         
+          
           # Run assetfinder in parallel on every line in the chunk file
-          cat "$CHUNK_FILE_PATH" | parallel -j 5 'subfinder -l {} -silent' > "$RAW_RESULTS_FILE"
+          # cat "$CHUNK_FILE_PATH" | parallel -j 5 'subfinder -dL {} -silent' > "$RAW_RESULTS_FILE"
 
           # --- CRITICAL: Sort results into root-domain specific folders ---
+          
           echo "INFO: Sorting raw results into root-domain specific files..."
           mkdir -p results # Create the main results directory
           
