@@ -317,11 +317,14 @@ jobs:
         run: |
           CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
           echo "Processing chunk '$CHUNK_FILE_PATH'..."
+          ls -lh "$CHUNK_FILE_PATH"
+          subfinder -h
+          parallel -h
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             
           fi
-
+          
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
           # Run assetfinder in parallel on every line in the chunk file
