@@ -234,8 +234,7 @@ jobs:
         uses: jakejarvis/wait-action@master
         with:
           time: '20s'
-        run: |
-          echo "Pausing for 20 seconds to space out worker triggers and avoid platform throttling..."
+
       # ====================================================================
       
       - name: Prepare Trigger Payload For Tertiary
