@@ -371,7 +371,7 @@ jobs:
       - name: Upload Primary Account Results
         uses: actions/upload-artifact@v4
         with:
-          name: primary_assetfinder_results_${{ matrix.pair.chunk }}
+          name: primary_assetfinder_results_${{ matrix.pair.chunk }}_${{ env.SAFE_CHUNK }}
           path: results/
           retention-days: 1
 
