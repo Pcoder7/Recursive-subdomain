@@ -362,6 +362,12 @@ jobs:
             grep -E "(^|\\.)${parent//./\\.}(\$)" "$RAW_RESULTS_FILE" | anew -q "$outfile"
           done < temp_root_domains.txt
 
+      - name: Compute SAFE_CHUNK (no slashes)
+        run: |
+          SAFE_CHUNK="${{ matrix.pair.chunk }}"
+          SAFE_CHUNK="$(echo "$SAFE_CHUNK" | tr '/' '_')"
+          echo "SAFE_CHUNK=$SAFE_CHUNK" >> $GITHUB_ENV    
+          
       - name: Upload Primary Account Results
         uses: actions/upload-artifact@v4
         with:
