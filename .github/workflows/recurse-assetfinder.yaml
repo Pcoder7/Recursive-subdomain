@@ -81,11 +81,11 @@ jobs:
             
             # Tier 1: Random sample of the top-tier
             echo "  -> Getting a random 250 sample from the top 500 subdomains..."
-            dsieve -if "$TEMP_ROOT_LIST" -top-subdomains 500 | shuf | head -n 250 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            dsieve -if "$TEMP_ROOT_LIST" -top 500 | shuf | head -n 250 | anew -q "$TEMP_SEED_LIST_DOMAIN"
             
             # Tier 2: Random sample of the mid-tier
             echo "  -> Getting a random 150 sample from the mid-tier (ranks 501-1000)..."
-            dsieve -if "$TEMP_ROOT_LIST" -top-subdomains 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            dsieve -if "$TEMP_ROOT_LIST" -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
 
             cat "$TEMP_SEED_LIST_DOMAIN" >> final-subdomain-list.txt
           done < unique_root_domains.txt
@@ -215,7 +215,7 @@ jobs:
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: run-assetfinder.yml # IMPORTANT: This must match the workflow name in the secondary repo
-          repo: ${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.STORE_REPO_NAME }} # Assuming worker workflow is in store-recon repo
+          repo: ${{ secrets.ACCOUNT2_REPO_OWNER }}/${{ secrets.STORE }} # Assuming worker workflow is in store-recon repo
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload_secondary.outputs.json_string }}
           ref: main
@@ -285,7 +285,7 @@ jobs:
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: resolve.yml
-          repo: ${{ env.ACCOUNT3_REPO_OWNER }}/${{ env.ACCOUNT3_REPO_NAME }}
+          repo: ${{ secrets.ACCOUNT3_REPO_OWNER }}/${{ secrets.ACCOUNT3_REPO_NAME }}
           token: ${{ secrets.PAT_FOR_TERTIARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload_tertiary.outputs.json_string }}
           ref: main
@@ -325,7 +325,7 @@ jobs:
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
           # Run assetfinder in parallel on every line in the chunk file
-          cat "$CHUNK_FILE_PATH" | parallel -j 5 'assetfinder --subs-only {}' > "$RAW_RESULTS_FILE"
+          cat "$CHUNK_FILE_PATH" | parallel -j 5 'subfinder -l {} -silent' > "$RAW_RESULTS_FILE"
 
           # --- CRITICAL: Sort results into root-domain specific folders ---
           echo "INFO: Sorting raw results into root-domain specific files..."
@@ -371,7 +371,7 @@ jobs:
         shell: bash
         env:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
-          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+          ACCOUNT2_USERNAME: ${{ secrets.SECONDARY_ACCOUNT_OWNER }}
           STORE: ${{secrets.STORE}}
         run: |
           set -e
@@ -398,7 +398,7 @@ jobs:
           git config --global user.email "actions-bot@users.noreply.github.com"
           
           TMP_DIR="$(mktemp -d)"
-          git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE_REPO_NAME}.git" "$TMP_DIR"
+          git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
           cd "$TMP_DIR"
 
           echo "Merging new results into the repository..."
