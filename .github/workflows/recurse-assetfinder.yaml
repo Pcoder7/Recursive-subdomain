@@ -319,7 +319,7 @@ jobs:
           echo "Processing chunk '$CHUNK_FILE_PATH'..."
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
-            exit 1
+            
           fi
 
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
@@ -333,7 +333,7 @@ jobs:
           
           if [ ! -s "$RAW_RESULTS_FILE" ]; then
             echo "INFO: Assetfinder found no new subdomains in this chunk."
-            exit 0
+            
           fi
           
           # First, find which root domains are even present in our results
