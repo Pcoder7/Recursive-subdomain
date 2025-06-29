@@ -355,7 +355,7 @@ jobs:
           while read -r parent; do
             if [ -z "$parent" ]; then continue; fi
             mkdir -p "results/$parent"
-            outfile="results/$parent/all_resolved.txt"
+            outfile="results/$parent/resolved_host.txt"
             echo "  -> Filtering results for '$parent' into '$outfile'"
             grep -E "(^|\\.)${parent//./\\.}(\$)" "$RAW_RESULTS_FILE" | anew -q "$outfile"
           done < temp_root_domains.txt
@@ -369,7 +369,7 @@ jobs:
       - name: Upload Primary Account Results
         uses: actions/upload-artifact@v4
         with:
-          name: primary_assetfinder_results_${{ matrix.pair.chunk }}_${{ env.SAFE_CHUNK }}
+          name: primary_results_${{ env.SAFE_CHUNK }}
           path: results/
           retention-days: 1
 
@@ -378,11 +378,21 @@ jobs:
     needs: run_primary_account_enumeration
     if: always() 
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pcoder7/spider-puredns-actions:latest
+      credentials:
+        username: ${{ secrets.GHCR_USER }}
+        password: ${{ secrets.GHCR_TOKEN }}        
     steps:
-      - name: Download all 'primary_assetfinder_results_*' artifacts
+      - name: Checkout repository (Account 2's repo)
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}    
+    
+      - name: Download all 'primary_results_*' artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: primary_assetfinder_results_*
+          pattern: primary_results_*
           path: temp_results
 
       - name: Organize and Push to store-recon
@@ -399,17 +409,19 @@ jobs:
           mkdir -p final_results
           
           # Find all result files downloaded from artifacts and merge them.
-          find temp_results -type f -name "all_resolved.txt" | while read -r filepath; do
+          find temp_results -type f -name "resolved_host.txt" | while read -r filepath; do
             # The parent directory name IS the root domain.
             parent_domain=$(basename "$(dirname "$filepath")")
             mkdir -p "final_results/$parent_domain"
-            cat "$filepath" >> "final_results/$parent_domain/all_resolved.txt"
+            cat "$filepath" | anew -q "final_results/$parent_domain/puredns_result.txt"
           done
 
           if [ -z "$(ls -A final_results)" ]; then
-            echo "No results to commit."
+            echo "has_results=false" >> $GITHUB_OUTPUT
             exit 0
           fi
+
+          echo "has_results=true" >> $GITHUB_OUTPUT
 
           echo "Cloning store-recon to commit results..."
           git config --global user.name "Assetfinder Bot"
@@ -417,15 +429,21 @@ jobs:
           
           TMP_DIR="$(mktemp -d)"
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
-          cd "$TMP_DIR"
+          cd "$TMP_DIR" || exit 1
 
           echo "Merging new results into the repository..."
           for domain_dir in ../final_results/*; do
             domain_name=$(basename "$domain_dir")
-            mkdir -p "results/$domain_name"
-            # Use sort -u to merge and de-duplicate the new results with any existing ones.
-            sort -u -o "results/$domain_name/all_resolved.txt" "results/$domain_name/all_resolved.txt" "$domain_dir/all_resolved.txt" 2>/dev/null || \
-            cp "$domain_dir/all_resolved.txt" "results/$domain_name/all_resolved.txt"
+
+            source_file="$domain_dir/puredns_result.txt"
+            dest_dir="results/$domain_name"
+            dest_file="$dest_dir/puredns_result.txt"
+
+            mkdir -p "$dest_dir"
+            # Robustly merge and de-duplicate new and existing results.
+            temp_merged_file=$(mktemp)
+            cat "$source_file" "$dest_file" 2>/dev/null | sort -u > "$temp_merged_file"
+            mv "$temp_merged_file" "$dest_file"
           done
 
           if git diff --cached --quiet && git diff --quiet; then
