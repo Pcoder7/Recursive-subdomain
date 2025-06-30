@@ -332,7 +332,7 @@ jobs:
 
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
-          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' > "$RAW_RESULTS_FILE"
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' | anew -q "$RAW_RESULTS_FILE"
          
           
           # Run assetfinder in parallel on every line in the chunk file
@@ -399,7 +399,7 @@ jobs:
         shell: bash
         env:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
-          ACCOUNT2_USERNAME: ${{ secrets.SECONDARY_ACCOUNT_OWNER }}
+          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
           STORE: ${{ secrets.STORE }}
         run: |
           set -e
