@@ -81,11 +81,11 @@ jobs:
             
             # Tier 1: Random sample of the top-tier
             echo "  -> Getting a random 250 sample from the top 500 subdomains..."
-            dsieve -if "$TEMP_ROOT_LIST" -top 500 | shuf | head -n 250 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 500 | shuf | head -n 250 | anew -q "$TEMP_SEED_LIST_DOMAIN"
             
             # Tier 2: Random sample of the mid-tier
             echo "  -> Getting a random 150 sample from the mid-tier (ranks 501-1000)..."
-            dsieve -if "$TEMP_ROOT_LIST" -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
 
             cat "$TEMP_SEED_LIST_DOMAIN" >> final-subdomain-list.txt
           done < unique_root_domains.txt
