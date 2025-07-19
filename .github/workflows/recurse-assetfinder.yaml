@@ -55,17 +55,14 @@ jobs:
           
           echo "INFO: Aggregating all results into a master list..."
           find store-recon-temp/results -type f -name "puredns_result.txt" -exec awk '{print $1}' {} + > all-resolved-subdomains.txt
-
           if [ ! -s all-resolved-subdomains.txt ]; then
               echo "::warning:: Master subdomain list is empty. No seeds to generate."
               touch final-subdomain-list.txt
               exit 0
           fi
-
           echo "INFO: Extracting unique root domains..."
           dsieve -if all-resolved-subdomains.txt -f 2 | sort -u > unique_root_domains.txt
           > final-subdomain-list.txt
-
           echo "INFO: Building smart seed list for each root domain..."
           while read -r ROOT_DOMAIN; do
             if [ -z "$ROOT_DOMAIN" ]; then continue; fi
@@ -75,7 +72,6 @@ jobs:
             TEMP_ROOT_LIST="${TMPDIR}/${ROOT_DOMAIN}-list.txt"
             grep -E "(^|\\.)${ROOT_DOMAIN//./\\.}(\$)" all-resolved-subdomains.txt > "$TEMP_ROOT_LIST"
             if [ ! -s "$TEMP_ROOT_LIST" ]; then continue; fi
-
             TEMP_SEED_LIST_DOMAIN="${TMPDIR}/${ROOT_DOMAIN}-seeds.txt"
             > "$TEMP_SEED_LIST_DOMAIN"
             
@@ -86,7 +82,6 @@ jobs:
             # Tier 2: Random sample of the mid-tier
             echo "  -> Getting a random 150 sample from the mid-tier (ranks 501-1000)..."
             dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
-
             cat "$TEMP_SEED_LIST_DOMAIN" >> final-subdomain-list.txt
           done < unique_root_domains.txt
           
@@ -94,10 +89,8 @@ jobs:
           mv final-subdomain-list.txt final-subdomain-list.tmp
           sort -u final-subdomain-list.tmp > final-subdomain-list.txt
           rm final-subdomain-list.tmp
-
           echo "SUCCESS: 'final-subdomain-list.txt' created with $(wc -l < final-subdomain-list.txt) total unique seeds."
           rm -rf store-recon-temp
-
       # STEP 2: Chunk the final seed list for distribution
       - name: Build Full Matrix & Create Chunks
         id: build_full_matrix
@@ -123,7 +116,6 @@ jobs:
           echo "$JSON_MATRIX" > full_matrix.json
           echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
           echo "total_chunks=$TOTAL_CHUNKS" >> $GITHUB_OUTPUT
-
       # STEP 3: Package the chunks into an artifact
       - name: Package All Chunks
         id: package_chunks
@@ -136,7 +128,6 @@ jobs:
           tar -czvf "$PACKAGE_TAR_FILENAME" chunks full_matrix.json
           echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
           echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
-
       # STEP 4: Upload the artifact
       - name: Upload Full Chunks Package
         if: steps.build_full_matrix.outputs.total_chunks > 0
@@ -164,7 +155,6 @@ jobs:
           ALL_CHUNKS_JSON='${{ needs.prepare_all_chunks_and_package.outputs.all_chunks_matrix_json }}'
           TOTAL_CHUNKS=${{ needs.prepare_all_chunks_and_package.outputs.total_chunks_count }}
           THRESHOLD=${{ env.DISTRIBUTION_THRESHOLD }}
-
           if [ "$TOTAL_CHUNKS" -lt "$THRESHOLD" ]; then
             PRIMARY_CHUNKS_JSON="$ALL_CHUNKS_JSON"
             SECONDARY_CHUNKS_JSON="[]"
@@ -209,7 +199,6 @@ jobs:
               "secondary_matrix_json": $matrix_as_a_string
             }')
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
-
       - name: Trigger Secondary Account Workflow
         if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
         uses: benc-uk/workflow-dispatch@v1
@@ -271,13 +260,11 @@ jobs:
           echo "Constructed JSON Payload: $JSON_PAYLOAD"
              # Set the constructed JSON string as an output of this step
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
-
       - name: DEBUG - Show Tertiary Inputs String
         if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
         run: |
           echo "DEBUG: Inputs for TERTIARY account:"
           # echo "${{ steps.prepare_payload_tertiary.outputs.json_string }}"    
-
       - name: Trigger Tertiary Account Workflow
         # This is a NEW step, a copy of the secondary trigger step for Account 3.
         id: trigger_tertiary
@@ -315,45 +302,26 @@ jobs:
         id: run_parallel
         shell: bash
         run: |
-          set -euo pipefail        
-          
           CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
           echo "Processing chunk '$CHUNK_FILE_PATH'..."
-
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             
           fi
-          
-          SUB_CHUNK_DIR="sub-chunks"
-          RAW_RESULTS_FILE="raw_subdomain_results.txt"
-          
-          # ─── PREP ──────────────────────────────────────────────────────────────────
-          # Ensure SUB_CHUNK_DIR is defined
-         
-          export SUB_CHUNK_DIR
-
-          # Clean & recreate directories
-          rm -rf "$SUB_CHUNK_DIR"
-          mkdir -p "$SUB_CHUNK_DIR" "${SUB_CHUNK_DIR}/raw_results"
+          SUB_CHUNK_DIR="sub-chunks-for-runner"
+          mkdir -p "$SUB_CHUNK_DIR"
           
           TOTAL_LINES=$(wc -l < "$CHUNK_FILE_PATH")
           LINES_PER_SUB_CHUNK=$(awk -v t="$TOTAL_LINES" 'BEGIN { print int((t+4)/5) }')
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
-          
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
-                   
-          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"'
+          RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
-          # ─── MERGE + DEDUPE ─────────────────────────────────────────────────────────
-          cat "$SUB_CHUNK_DIR/raw_results"/result_*.txt | sort -u > "$RAW_RESULTS_FILE"
-
-          echo "✅ All done. Consolidated into $RAW_RESULTS_FILE with $(wc -l < "$RAW_RESULTS_FILE") subdomains"
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' | anew -q "$RAW_RESULTS_FILE"
          
           
-          # Run findomain in parallel on every line in the chunk file
-          
-
+          # Run assetfinder in parallel on every line in the chunk file
+          # cat "$CHUNK_FILE_PATH" | parallel -j 5 'subfinder -dL {} -silent' > "$RAW_RESULTS_FILE"
           # --- CRITICAL: Sort results into root-domain specific folders ---
           
           echo "INFO: Sorting raw results into root-domain specific files..."
@@ -366,7 +334,6 @@ jobs:
           
           # First, find which root domains are even present in our results
           dsieve -if "$RAW_RESULTS_FILE" -f 2 | sort -u > temp_root_domains.txt
-
           # Now, loop through those root domains and extract their subdomains
           while read -r parent; do
             if [ -z "$parent" ]; then continue; fi
@@ -375,7 +342,6 @@ jobs:
             echo "  -> Filtering results for '$parent' into '$outfile'"
             grep -E "(^|\\.)${parent//./\\.}(\$)" "$RAW_RESULTS_FILE" | anew -q "$outfile"
           done < temp_root_domains.txt
-
       - name: Compute SAFE_CHUNK (no slashes)
         run: |
           SAFE_CHUNK="${{ matrix.pair.chunk }}"
@@ -431,14 +397,11 @@ jobs:
             mkdir -p "final_results/$parent_domain"
             cat "$filepath" | anew -q "final_results/$parent_domain/puredns_result.txt"
           done
-
           if [ -z "$(ls -A final_results)" ]; then
             echo "has_results=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-
           echo "has_results=true" >> $GITHUB_OUTPUT
-
           echo "Cloning store-recon to commit results..."
           git config --global user.name "Assetfinder Bot"
           git config --global user.email "actions-bot@users.noreply.github.com"
@@ -446,22 +409,18 @@ jobs:
           TMP_DIR="$(mktemp -d)"
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
           cd "$TMP_DIR" || exit 1
-
           echo "Merging new results into the repository..."
           for domain_dir in ../final_results/*; do
             domain_name=$(basename "$domain_dir")
-
             source_file="$domain_dir/puredns_result.txt"
             dest_dir="results/$domain_name"
             dest_file="$dest_dir/puredns_result.txt"
-
             mkdir -p "$dest_dir"
             # Robustly merge and de-duplicate new and existing results.
             temp_merged_file=$(mktemp)
             cat "$source_file" "$dest_file" 2>/dev/null | sort -u > "$temp_merged_file"
             mv "$temp_merged_file" "$dest_file"
           done
-
           if git diff --cached --quiet && git diff --quiet; then
             echo "No changes to commit in store-recon."
             exit 0
