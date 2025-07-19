@@ -302,46 +302,109 @@ jobs:
         id: run_parallel
         shell: bash
         run: |
+          set -euo pipefail        
+          
           CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
           echo "Processing chunk '$CHUNK_FILE_PATH'..."
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             
           fi
-          SUB_CHUNK_DIR="sub-chunks-for-runner"
-          mkdir -p "$SUB_CHUNK_DIR"
+          
+          SUB_CHUNK_DIR="sub-chunks"
+          RAW_RESULTS_FILE="raw_subdomain_results.txt"
+          
+          # ─── PREP ──────────────────────────────────────────────────────────────────
+          # Ensure SUB_CHUNK_DIR is defined
+         
+          export SUB_CHUNK_DIR
+          # Clean & recreate directories
+          rm -rf "$SUB_CHUNK_DIR"
+          mkdir -p "$SUB_CHUNK_DIR" "${SUB_CHUNK_DIR}/raw_results"
           
           TOTAL_LINES=$(wc -l < "$CHUNK_FILE_PATH")
           LINES_PER_SUB_CHUNK=$(awk -v t="$TOTAL_LINES" 'BEGIN { print int((t+4)/5) }')
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
-          split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
-          RAW_RESULTS_FILE="raw_assetfinder_results.txt"
           
-          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' | anew -q "$RAW_RESULTS_FILE"
+          split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
+                   
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"'
+          
+          # ─── MERGE + DEDUPE ─────────────────────────────────────────────────────────
+          cat "$SUB_CHUNK_DIR/raw_results"/result_*.txt | sort -u > "$RAW_RESULTS_FILE"
+          echo "✅ All done. Consolidated into $RAW_RESULTS_FILE with $(wc -l < "$RAW_RESULTS_FILE") subdomains"
          
           
-          # Run assetfinder in parallel on every line in the chunk file
-          # cat "$CHUNK_FILE_PATH" | parallel -j 5 'subfinder -dL {} -silent' > "$RAW_RESULTS_FILE"
-          # --- CRITICAL: Sort results into root-domain specific folders ---
-          
-          echo "INFO: Sorting raw results into root-domain specific files..."
-          mkdir -p results 
+      # ====================================================================
+      # NEW STEP: PureDNS Resolution
+      # ====================================================================
+      - name: Resolve Discovered Subdomains with PureDNS
+        id: run_puredns
+        shell: bash
+        run: |
+          RAW_RESULTS_FILE="raw_subdomain_results.txt"
+          RESOLVED_FILE="puredns_resolved.txt"
+          WILDCARD_FILE="wildcard_sub.txt"
+          MASSDNS_FILE="massdns_file.txt"
           
           if [ ! -s "$RAW_RESULTS_FILE" ]; then
-            echo "INFO: Assetfinder found no new subdomains in this chunk."
+            echo "INFO: Raw results file is empty. Nothing to resolve."
+            touch "$RESOLVED_FILE" # Create an empty file to prevent downstream errors
+            exit 0
+          fi
+
+          wget -qO resolvers.txt https://raw.githubusercontent.com/and0x00/resolvers.txt/refs/heads/main/resolvers.txt
+          
+          echo "INFO: Resolving subdomains using puredns..."
+          # The container image includes a list of public resolvers at /opt/resolvers.txt
+          puredns resolve "$RAW_RESULTS_FILE" \
+            -r resolvers.txt \
+            --rate-limit 3000 \
+            --skip-validation \
+            --write "$RESOLVED_FILE" \
+            --write-wildcards "$WILDCARD_FILE" \
+            --write-massdns "$MASSDNS_FILE" \
+            --wildcard-batch 100000 --wildcard-tests 250 --quiet
             
+          
+          echo "✅ PureDNS resolution complete. $(wc -l < "$RESOLVED_FILE") subdomains were successfully resolved."
+
+          echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
+
+          cat "$MASSDNS_FILE" | head -n15 
+          
+          
+      # ====================================================================
+      # MOVED AND MODIFIED STEP: Sorting
+      # ====================================================================
+      - name: Sort Resolved Results into Root Domain Folders
+        shell: bash
+        run: |
+          # This step now uses the output from puredns as its source
+          RESOLVED_FILE="puredns_resolved.txt"
+          WILDCARD_FILE="wildcard_sub.txt"
+          MASSDNS_FILE="massdns_file.txt"
+          echo "INFO: Sorting resolved results into root-domain specific files..."
+          mkdir -p results 
+          
+          if [ ! -s "$RESOLVED_FILE" ]; then
+            echo "INFO: PureDNS found no resolvable domains in this chunk."
+            exit 0
           fi
           
-          # First, find which root domains are even present in our results
-          dsieve -if "$RAW_RESULTS_FILE" -f 2 | sort -u > temp_root_domains.txt
+          # First, find which root domains are present in our *resolved* results
+          dsieve -if "$RESOLVED_FILE" -f 2 | sort -u > temp_root_domains.txt
+          
           # Now, loop through those root domains and extract their subdomains
           while read -r parent; do
             if [ -z "$parent" ]; then continue; fi
             mkdir -p "results/$parent"
-            outfile="results/$parent/resolved_host.txt"
+            outfile="results/$parent/puredns_results.txt" # This name is kept for compatibility with commit job
             echo "  -> Filtering results for '$parent' into '$outfile'"
-            grep -E "(^|\\.)${parent//./\\.}(\$)" "$RAW_RESULTS_FILE" | anew -q "$outfile"
+            # CRITICAL: Grep from the RESOLVED_FILE, not the raw results
+            grep -E "(^|\\.)${parent//./\\.}(\$)" "$RESOLVED_FILE" | anew -q "$outfile"
           done < temp_root_domains.txt
+            
       - name: Compute SAFE_CHUNK (no slashes)
         run: |
           SAFE_CHUNK="${{ matrix.pair.chunk }}"
@@ -351,31 +414,97 @@ jobs:
       - name: Upload Primary Account Results
         uses: actions/upload-artifact@v4
         with:
-          name: primary_results_${{ env.SAFE_CHUNK }}
+          name: recon-results-primary-${{ env.SAFE_CHUNK }}
           path: results/
           retention-days: 1
 
+# ====================================================================
+# This job remains unchanged and is already correctly configured
+# to consume the artifacts produced by the puredns-enabled worker.
+# ====================================================================
+  merge_results:
+    name: Merge All Distributed Results
+    runs-on: ubuntu-latest
+    # This should be triggered after all worker workflows have had time to complete.
+    # In a single-workflow setup, it would need `run_primary_account_enumeration`.
+    # In a multi-workflow setup, it would be triggered via `repository_dispatch`.
+    needs: run_primary_account_enumeration 
+    if: always() 
+    outputs:
+      has_results: ${{ steps.consolidate.outputs.has_results }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download all result artifacts from all accounts
+        uses: actions/download-artifact@v4
+        with:
+          # This pattern correctly finds artifacts from primary, secondary, and tertiary workers
+          pattern: 'recon-results-*'
+          path: temp-aggregated-results
+          merge-multiple: true
+
+      - name: Consolidate all results into root domain folders
+        id: consolidate
+        shell: bash
+        run: |
+          set -e
+          mkdir -p final_results
+          
+          if [ ! -d "temp-aggregated-results" ] || [ -z "$(ls -A temp-aggregated-results)" ]; then
+            echo "::warning:: No result artifacts were found from any account. Nothing to merge."
+            echo "has_results=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "INFO: Aggregating all downloaded (and puredns-resolved) results..."
+          
+          # This 'find' command works perfectly because the worker job still outputs
+          # a file named 'resolved_host.txt' in the correct directory structure.
+          find temp-aggregated-results -type f -name "puredns_results.txt" | while read -r filepath; do
+            parent_domain=$(basename "$(dirname "$filepath")")
+            mkdir -p "final_results/$parent_domain"
+            cat "$filepath" | anew -q "final_results/$parent_domain/puredns_result.txt"
+          done
+          
+          if [ -z "$(ls -A final_results)" ]; then
+            echo "::warning:: Result artifacts were downloaded, but they contained no resolved domains."
+            echo "has_results=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_results=true" >> $GITHUB_OUTPUT
+          echo "✅ Successfully consolidated results from all accounts."
+          ls -R final_results
+
+      - name: Upload Final Consolidated Artifact
+        if: steps.consolidate.outputs.has_results == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-recon-results
+          path: final_results/
+          retention-days: 1
+
+# ====================================================================
+# This job also remains unchanged. It correctly consumes the artifact
+# from the merge_results job.
+# ====================================================================
   commit_all_results:
     name: Commit All Results
-    needs: run_primary_account_enumeration
-    if: always() 
+    needs: merge_results 
+    if: needs.merge_results.outputs.has_results == 'true'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/pcoder7/spider-puredns-actions:latest
       credentials:
-        username: ${{ secrets.GHCR_USER }}
-        password: ${{ secrets.GHCR_TOKEN }}        
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
     steps:
-      - name: Checkout repository (Account 2's repo)
-        uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}    
-    
-      - name: Download all 'primary_results_*' artifacts
+      - name: Download the single consolidated results artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: primary_results_*
-          path: temp_results
+          name: consolidated-recon-results
+          path: final_results
 
       - name: Organize and Push to store-recon
         shell: bash
@@ -385,23 +514,7 @@ jobs:
           STORE: ${{ secrets.STORE }}
         run: |
           set -e
-          echo "Organizing primary results..."
           
-          # This temporary directory holds the final, aggregated results.
-          mkdir -p final_results
-          
-          # Find all result files downloaded from artifacts and merge them.
-          find temp_results -type f -name "resolved_host.txt" | while read -r filepath; do
-            # The parent directory name IS the root domain.
-            parent_domain=$(basename "$(dirname "$filepath")")
-            mkdir -p "final_results/$parent_domain"
-            cat "$filepath" | anew -q "final_results/$parent_domain/puredns_result.txt"
-          done
-          if [ -z "$(ls -A final_results)" ]; then
-            echo "has_results=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          echo "has_results=true" >> $GITHUB_OUTPUT
           echo "Cloning store-recon to commit results..."
           git config --global user.name "Assetfinder Bot"
           git config --global user.email "actions-bot@users.noreply.github.com"
@@ -409,24 +522,31 @@ jobs:
           TMP_DIR="$(mktemp -d)"
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
           cd "$TMP_DIR" || exit 1
-          echo "Merging new results into the repository..."
+          
+          echo "Merging new consolidated results into the repository..."
           for domain_dir in ../final_results/*; do
             domain_name=$(basename "$domain_dir")
-            source_file="$domain_dir/puredns_result.txt"
+            source_file="$domain_dir/puredns_results.txt"
             dest_dir="results/$domain_name"
-            dest_file="$dest_dir/puredns_result.txt"
+            dest_file="$dest_dir/puredns_results.txt"
+            
             mkdir -p "$dest_dir"
-            # Robustly merge and de-duplicate new and existing results.
+            
             temp_merged_file=$(mktemp)
-            cat "$source_file" "$dest_file" 2>/dev/null | sort -u > "$temp_merged_file"
+            if [ -f "$dest_file" ]; then
+              cat "$source_file" "$dest_file" | sort -u > "$temp_merged_file"
+            else
+              sort -u "$source_file" > "$temp_merged_file"
+            fi
             mv "$temp_merged_file" "$dest_file"
           done
+          
           if git diff --cached --quiet && git diff --quiet; then
             echo "No changes to commit in store-recon."
             exit 0
           fi
           
           git add results/
-          git commit -m "feat: Add new subdomains from assetfinder scan"
+          git commit -m "feat: Add new subdomains from distributed recon scan (Run ID ${{ github.run_id }})"
           git push origin main
-          echo "Successfully pushed new results to store-recon."
+          echo "✅ Successfully pushed new consolidated results to store-recon."
