@@ -331,6 +331,8 @@ jobs:
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
 
           RAW_RESULTS_FILE="raw_assetfinder_results.txt"
+
+          findomain --help
           
           ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' | anew -q "$RAW_RESULTS_FILE"
          
