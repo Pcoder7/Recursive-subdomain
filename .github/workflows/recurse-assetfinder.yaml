@@ -333,7 +333,7 @@ jobs:
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
                    
-          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 8 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"'
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"'
           
           # ─── MERGE + DEDUPE ─────────────────────────────────────────────────────────
           cat ${SUB_CHUNK_DIR}/raw_results/result_*.txt | sort -u > "$RAW_RESULTS_FILE"
