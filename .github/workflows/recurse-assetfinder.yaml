@@ -330,11 +330,11 @@ jobs:
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
 
-          RAW_RESULTS_FILE="raw_assetfinder_results.txt"
+          RAW_RESULTS_FILE="raw_subdomain_results.txt"
 
           findomain --help
           
-          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'subfinder -dL "{}" -silent' | anew -q "$RAW_RESULTS_FILE"
+          ls ${SUB_CHUNK_DIR}/sub_chunk_* | parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "$RAW_RESULTS_FILE"'
          
           
           # Run assetfinder in parallel on every line in the chunk file
