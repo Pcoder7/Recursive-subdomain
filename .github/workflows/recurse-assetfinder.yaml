@@ -371,7 +371,7 @@ jobs:
 
           echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          cat "$MASSDNS_FILE" | head -n15 
+          cat "$MASSDNS_FILE" 
           
           
       # ====================================================================
@@ -518,7 +518,6 @@ jobs:
   commit_all_results:
     name: Commit All Results
     needs: merge_results 
-    if: needs.merge_results.outputs.has_results == 'true'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/pcoder7/spider-puredns-actions:latest
@@ -547,8 +546,7 @@ jobs:
           
           TMP_DIR="$(mktemp -d)"
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
-          cd "$TMP_DIR" || exit 1
-          
+          cd "$TMP_DIR" 
           echo "Merging new consolidated results into the repository..."
           for domain_dir in ../final_results/*; do
             domain_name=$(basename "$domain_dir")
