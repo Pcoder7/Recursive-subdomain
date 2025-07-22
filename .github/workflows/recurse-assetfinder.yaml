@@ -420,14 +420,15 @@ jobs:
             --skip-wildcard-filter \
             --write "$RESOLVED_FILE" \
             --write-massdns "$MASSDNS_FILE" 
-            
-            
-          
+            --quiet >/dev/null 2>&1
+
+           
+                     
           echo "✅ PureDNS resolution complete. $(wc -l < "$RESOLVED_FILE") subdomains were successfully resolved."
 
           # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          head -n5 "$MASSDNS_FILE" 
+          sed '/^[[:space:]]*$/d' "$MASSDNS_FILE"
           
       - name: Map subdomains to ports with CDN filtering
         id: map_subdomains_cdn
@@ -707,22 +708,6 @@ jobs:
 # This job also remains unchanged. It correctly consumes the artifact
 # from the merge_results job.
 # ====================================================================
-  commit_all_results:
-    name: Commit All Results
-    needs: merge_results 
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/pcoder7/spider-puredns-actions:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GHCR_TOKEN }}
-    steps:
-      - name: Download the single consolidated results artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: consolidated-recon-results
-          path: final_results
-
       - name: Organize and Push to store-recon
         shell: bash
         env:
@@ -732,65 +717,67 @@ jobs:
         run: |
           set -e
           
-          # --- FIX: Define the absolute path to the downloaded results ---
-          # The artifact is downloaded relative to the workspace root.
           RESULTS_DIR="${GITHUB_WORKSPACE}/final_results"
           
           if [ ! -d "$RESULTS_DIR" ] || [ -z "$(ls -A "$RESULTS_DIR")" ]; then
             echo "::warning:: Results directory is empty or does not exist. Nothing to commit."
             exit 0
           fi
-
           echo "Cloning ${STORE} to commit results..."
           git config --global user.name "Assetfinder Bot"
           git config --global user.email "actions-bot@users.noreply.github.com"
           
           TMP_DIR="$(mktemp -d)"
+          # Cloning is successful, which configures the remote with the PAT for the push.
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
           cd "$TMP_DIR" 
-
           echo "Merging new consolidated results into the repository..."
-
-          # --- FIX: Loop over the absolute path to the results ---
-          # This loop now correctly finds the per-domain directories.
           for domain_dir in "${RESULTS_DIR}"/*; do
-            if [ ! -d "$domain_dir" ]; then continue; fi # Skip if not a directory
+            if [ ! -d "$domain_dir" ]; then continue; fi
             
             domain_name=$(basename "$domain_dir")
             dest_repo_dir="results/$domain_name"
             mkdir -p "$dest_repo_dir"
 
-            # --- MODIFICATION: Process both result files ---
-
-            # 1. Process puredns_results.txt
+            # --- MODIFICATION 1: puredns_results.txt -> all_subdomains.txt ---
             source_puredns_file="$domain_dir/puredns_results.txt"
-            dest_puredns_file="$dest_repo_dir/puredns_results.txt"
+            # The destination file in the repo is now named 'all_subdomains.txt'
+            dest_all_subs_file="$dest_repo_dir/all_subdomains.txt"
 
-            if [ -f "$source_puredns_file" ]; then
-              echo "  -> Merging puredns_results.txt for $domain_name"
-              # Use anew for a cleaner merge syntax
-              cat "$source_puredns_file" | anew -q "$dest_puredns_file"
+            if [ -s "$source_puredns_file" ]; then # Use -s to check if source has content
+              echo "  -> Merging puredns results into '$dest_all_subs_file'"
+              cat "$source_puredns_file" | anew -q "$dest_all_subs_file"
             fi
             
-            # 2. Process subdomain_ports.txt
+            # --- MODIFICATION 2: subdomain_ports.txt -> puredns_result.txt ---
             source_ports_file="$domain_dir/subdomain_ports.txt"
-            dest_ports_file="$dest_repo_dir/subdomain_ports.txt"
+            # The destination file in the repo is now named 'puredns_result.txt'
+            dest_puredns_file="$dest_repo_dir/puredns_result.txt"
             
-            if [ -f "$source_ports_file" ]; then
-              echo "  -> Merging subdomain_ports.txt for $domain_name"
-              # Use anew again for the ports file
-              cat "$source_ports_file" | anew -q "$dest_ports_file"
+            # This check is now CRITICAL. Only process if the source file has content.
+            # An empty source file should not create an empty destination file.
+            if [ -s "$source_ports_file" ]; then
+              echo "  -> Merging port data into '$dest_puredns_file'"
+              cat "$source_ports_file" | anew -q "$dest_puredns_file"
+            else
+              echo "  -> Skipping empty subdomain_ports.txt for $domain_name"
             fi
           done
           
-          # --- FIX: The git diff command is correct, no changes needed here ---
+          echo "--- Checking Git Status Before Commit ---"
+          git status
+          echo "---------------------------------------"
+          
+          # The git diff command correctly checks for any changes in the working directory.
           if git diff --cached --quiet && git diff --quiet; then
-            echo "No changes to commit in ${STORE}."
+            echo "No new data to commit in ${STORE}."
             exit 0
           fi
           
           echo "Committing and pushing changes to ${STORE}..."
           git add results/
           git commit -m "feat: Add new assets from distributed recon scan (Run ID ${{ github.run_id }})"
-          git push origin main
+          # The push command implicitly uses the PAT from the clone URL.
+          git push -v origin main
+          
           echo "✅ Successfully pushed new consolidated results to ${STORE}."
