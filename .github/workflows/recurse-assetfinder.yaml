@@ -486,7 +486,7 @@ jobs:
           echo "==================================================================="
 
           echo "▶ Running smap on non‑CDN IPs…"
-          smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
+          smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN" >/dev/null 2>&1
 
           echo "✅ All done. TMP_SMAP_NONCDN contains $(wc -l < "$TMP_SMAP_NONCDN") IP" 
 
@@ -535,7 +535,7 @@ jobs:
             > "$OUTPUT"
 
           echo "✅ Generated $OUTPUT (first 5 lines):"
-          head -n5 "$OUTPUT"
+          head -n50 "$OUTPUT"
 
           # cleanup
           rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN"       
