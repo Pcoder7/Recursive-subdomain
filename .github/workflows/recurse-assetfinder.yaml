@@ -508,6 +508,8 @@ jobs:
       # ====================================================================
       # MOVED AND MODIFIED STEP: Sorting
       # ====================================================================
+
+          
       - name: Sort Resolved Results into Root Domain Folders
         shell: bash
         run: |
@@ -515,33 +517,6 @@ jobs:
           RESOLVED_FILE="puredns_resolved.txt"
           WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
-          echo "INFO: Sorting resolved results into root-domain specific files..."
-          mkdir -p results 
-          
-          if [ ! -s "$RESOLVED_FILE" ]; then
-            echo "INFO: PureDNS found no resolvable domains in this chunk."
-            exit 0
-          fi
-          
-          # First, find which root domains are present in our *resolved* results
-          dsieve -if "$RESOLVED_FILE" -f 2 | sort -u > temp_root_domains.txt
-          
-          # Now, loop through those root domains and extract their subdomains
-          while read -r parent; do
-            if [ -z "$parent" ]; then continue; fi
-            mkdir -p "results/$parent"
-            outfile="results/$parent/puredns_results.txt" # This name is kept for compatibility with commit job
-            echo "  -> Filtering results for '$parent' into '$outfile'"
-            # CRITICAL: Grep from the RESOLVED_FILE, not the raw results
-            grep -E "(^|\\.)${parent//./\\.}(\$)" "$RESOLVED_FILE" | anew -q "$outfile"
-          done < temp_root_domains.txt
-          
-      - name: Sort Resolved Results into Root Domain Folders
-        shell: bash
-        run: |
-          # This step now uses the output from puredns as its source
-          RESOLVED_FILE="puredns_resolved.txt"
-
           PORTS_INPUT_FILE="subdomain_ports.txt"
         
           echo "INFO: Sorting resolved results into root-domain specific files..."
