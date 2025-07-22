@@ -547,7 +547,7 @@ jobs:
             # This grep command is the core of the solution. It finds lines in the ports file
             # that belong to the current parent domain.
             # The regex matches the parent domain when it is followed by either a colon OR the end of the line.
-            grep -E "(^|\\.)${parent//./\\.}(\:|\$)" --color=never "$PORTS_INPUT_FILE" | anew -q "$ports_outfile"
+            grep -E "(^|\\.)${parent//./\\.}(\:|\$)" --color=never "$PORTS_INPUT_FILE" | anew -q "$ports_outfile" || true
             
 
           done < temp_root_domains.txt
