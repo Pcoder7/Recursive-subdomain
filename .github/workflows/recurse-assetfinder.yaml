@@ -349,6 +349,8 @@ jobs:
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
           
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
+
+          naabu -h
                    
           parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"' ::: ${SUB_CHUNK_DIR}/sub_chunk_*
           
@@ -426,11 +428,11 @@ jobs:
                                
           echo "✅ PureDNS resolution complete. $(wc -l < "$PUREDNS_FILE") subdomains were successfully resolved."
 
-          cat "$PUREDNS_FILE" | inscope -s scope > "$RESOLVED_FILE"
+          cat "$PUREDNS_FILE" | inscope -s scope > "$RESOLVED_FILE" || true
 
           # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope -s scope > "$MASSDNS_FILE"
+          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope -s scope > "$MASSDNS_FILE" || true
 
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
           
