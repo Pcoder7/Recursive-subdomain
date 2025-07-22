@@ -399,13 +399,15 @@ jobs:
         shell: bash
         run: |
           RAW_RESULTS_FILE="raw_subdomain_results.txt"
+          PUREDNS_FILE="puredns_file.txt"
           RESOLVED_FILE="puredns_resolved.txt"
+          MASSDNS="massdns.txt"
           #WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
           
           if [ ! -s "$RAW_RESULTS_FILE" ]; then
             echo "INFO: Raw results file is empty. Nothing to resolve."
-            touch "$RESOLVED_FILE" # Create an empty file to prevent downstream errors
+            touch "$PUREDNS_FILE" # Create an empty file to prevent downstream errors
             exit 0
           fi
 
@@ -418,17 +420,21 @@ jobs:
             --rate-limit 3000 \
             --skip-validation \
             --skip-wildcard-filter \
-            --write "$RESOLVED_FILE" \
-            --write-massdns "$MASSDNS_FILE" \
+            --write "$PUREDNS_FILE" \
+            --write-massdns "$MASSDNS" \
             --quiet >/dev/null 2>&1
+                               
+          echo "✅ PureDNS resolution complete. $(wc -l < "$PUREDNS_FILE") subdomains were successfully resolved."
 
-           
-                     
-          echo "✅ PureDNS resolution complete. $(wc -l < "$RESOLVED_FILE") subdomains were successfully resolved."
+          cat "$PUREDNS_FILE" | inscope -s scope > "$RESOLVED_FILE"
 
           # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          sed '/^[[:space:]]*$/d' "$MASSDNS_FILE"
+          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope -s scope > "$MASSDNS_FILE"
+
+          echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
+          
+          cat "$MASSDNS_FILE"
           
       - name: Map subdomains to ports with CDN filtering
         id: map_subdomains_cdn
@@ -440,7 +446,7 @@ jobs:
           MASSDNS_FILE="massdns_file.txt"
           SMAP_FILE="smap.txt"
           OUTPUT="subdomain_ports.txt"
-
+          
           # create per‑runner temp files
           TMP_IP2SUB=$(mktemp)
           TMP_IP_ONLY=$(mktemp)
@@ -486,7 +492,9 @@ jobs:
           echo "==================================================================="
 
           echo "▶ Running smap on non‑CDN IPs…"
-          smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
+          naabu -list "$TMP_NONCDN" -o "$TMP_SMAP_NONCDN" -skip-host-discovery -c 100 -retries 3 -timeout 2000 -no-color >/dev/null 2>&1
+          
+          # smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
 
           echo "✅ All done. TMP_SMAP_NONCDN contains $(wc -l < "$TMP_SMAP_NONCDN") IP" 
 
@@ -538,11 +546,10 @@ jobs:
           head -n50 "$OUTPUT"
 
           # cleanup
-          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN"       
+          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$PUREDNS_FILE" "$MASSDNS"    
       # ====================================================================
       # MOVED AND MODIFIED STEP: Sorting
       # ====================================================================
-
           
       - name: Sort Resolved Results into Root Domain Folders
         shell: bash
@@ -551,6 +558,7 @@ jobs:
           RESOLVED_FILE="puredns_resolved.txt"
           #WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
+          M
           PORTS_INPUT_FILE="subdomain_ports.txt"
         
           echo "INFO: Sorting resolved results into root-domain specific files..."
@@ -599,10 +607,7 @@ jobs:
           path: results/
           retention-days: 1
 
-# ====================================================================
-# This job remains unchanged and is already correctly configured
-# to consume the artifacts produced by the puredns-enabled worker.
-# ====================================================================
+
   merge_results:
     name: Merge All Distributed Results
     runs-on: ubuntu-latest
