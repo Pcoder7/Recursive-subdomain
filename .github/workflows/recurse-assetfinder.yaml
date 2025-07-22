@@ -535,7 +535,48 @@ jobs:
             # CRITICAL: Grep from the RESOLVED_FILE, not the raw results
             grep -E "(^|\\.)${parent//./\\.}(\$)" "$RESOLVED_FILE" | anew -q "$outfile"
           done < temp_root_domains.txt
+          
+      - name: Sort Resolved Results into Root Domain Folders
+        shell: bash
+        run: |
+          # This step now uses the output from puredns as its source
+          RESOLVED_FILE="puredns_resolved.txt"
+
+          PORTS_INPUT_FILE="subdomain_ports.txt"
+        
+          echo "INFO: Sorting resolved results into root-domain specific files..."
+          mkdir -p results 
+          
+          if [ ! -s "$RESOLVED_FILE" ]; then
+            echo "INFO: PureDNS found no resolvable domains in this chunk."
+            exit 0
+          fi
+          
+          # First, find which root domains are present in our *resolved* results
+          dsieve -if "$RESOLVED_FILE" -f 2 | sort -u > temp_root_domains.txt
+          
+          # Now, loop through those root domains and extract their subdomains
+          while read -r parent; do
+            if [ -z "$parent" ]; then continue; fi
+            mkdir -p "results/$parent"
             
+            # --- Original Logic for puredns results (unchanged) ---
+            outfile="results/$parent/puredns_results.txt"
+            echo "  -> Filtering puredns results for '$parent' into '$outfile'"
+            grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "$outfile"
+
+            # --- New Logic to sort the subdomain_ports.txt file ---
+            ports_outfile="results/$parent/subdomain_ports.txt"
+            echo "  -> Filtering port data for '$parent' into '$ports_outfile'"
+
+            # This grep command is the core of the solution. It finds lines in the ports file
+            # that belong to the current parent domain.
+            # The regex matches the parent domain when it is followed by either a colon OR the end of the line.
+            grep -E "(^|\\.)${parent//./\\.}(\:|\$)" --color=never "$PORTS_INPUT_FILE" | anew -q "$ports_outfile"
+            
+
+          done < temp_root_domains.txt
+          
       - name: Compute SAFE_CHUNK (no slashes)
         run: |
           SAFE_CHUNK="${{ matrix.pair.chunk }}"
@@ -601,7 +642,7 @@ jobs:
           path: temp-aggregated-results
           merge-multiple: true
 
-      - name: Consolidate all results into root domain folders
+      - name: Consolidate all results into root domain folders   
         id: consolidate
         shell: bash
         run: |
@@ -614,18 +655,30 @@ jobs:
             exit 0
           fi
           
-          echo "INFO: Aggregating all downloaded (and puredns-resolved) results..."
+          echo "INFO: Aggregating all downloaded results..."
           
-          # This 'find' command works perfectly because the worker job still outputs
-          # a file named 'resolved_host.txt' in the correct directory structure.
+
           find temp-aggregated-results -type f -name "puredns_results.txt" | while read -r filepath; do
             parent_domain=$(basename "$(dirname "$filepath")")
             mkdir -p "final_results/$parent_domain"
-            cat "$filepath" | anew -q "final_results/$parent_domain/puredns_result.txt"
+            
+            cat "$filepath" | anew -q "final_results/$parent_domain/puredns_results.txt"
           done
+
+
+          echo "INFO: Aggregating subdomain port data..."
+          find temp-aggregated-results -type f -name "subdomain_ports.txt" | while read -r filepath; do
+            # Extract the parent domain from the directory structure (e.g., 'example.com')
+            parent_domain=$(basename "$(dirname "$filepath")")
+            # Ensure the final destination directory exists
+            mkdir -p "final_results/$parent_domain"
+            # Append the contents of this chunk's file to the final consolidated file, ensuring uniqueness.
+            cat "$filepath" | anew -q "final_results/$parent_domain/subdomain_ports.txt"
+          done
+         
           
           if [ -z "$(ls -A final_results)" ]; then
-            echo "::warning:: Result artifacts were downloaded, but they contained no resolved domains."
+            echo "::warning:: Result artifacts were downloaded, but they contained no valid data to merge."
             echo "has_results=false" >> $GITHUB_OUTPUT
             exit 0
           fi
