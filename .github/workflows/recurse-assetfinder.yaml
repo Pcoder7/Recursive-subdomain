@@ -400,7 +400,7 @@ jobs:
         run: |
           RAW_RESULTS_FILE="raw_subdomain_results.txt"
           RESOLVED_FILE="puredns_resolved.txt"
-          WILDCARD_FILE="wildcard_sub.txt"
+          #WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
           
           if [ ! -s "$RAW_RESULTS_FILE" ]; then
@@ -417,15 +417,15 @@ jobs:
             -r resolvers.txt \
             --rate-limit 3000 \
             --skip-validation \
+            --skip-wildcard-filter \
             --write "$RESOLVED_FILE" \
-            --write-wildcards "$WILDCARD_FILE" \
-            --write-massdns "$MASSDNS_FILE" \
-            --wildcard-batch 100000 --wildcard-tests 250 --quiet >/dev/null 2>&1
+            --write-massdns "$MASSDNS_FILE" 
+            
             
           
           echo "✅ PureDNS resolution complete. $(wc -l < "$RESOLVED_FILE") subdomains were successfully resolved."
 
-          echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
+          # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
           head -n5 "$MASSDNS_FILE" 
           
@@ -460,18 +460,51 @@ jobs:
             | sort -u > "$TMP_IP_ONLY"
 
           echo "▶ Filtering non‑CDN IPs with cut-cdn…"
-          cat "$TMP_IP_ONLY" | cut-cdn -ua -t 100 -silent -o "$TMP_NONCDN"
+          cat "$TMP_IP_ONLY" | cut-cdn -ua -t 50 -silent -o "$TMP_NONCDN"
+
+          echo "✅ All done. TMP_IP_ONLY contains $(wc -l < "$TMP_IP_ONLY") IP"
+
+          head -n50 "$TMP_IP_ONLY"
+
+          echo "==================================================================="
+
+          echo "✅ All done. TMP_NONCDN contains $(wc -l < "$TMP_NONCDN") IP"
+
+
+          head -n50 "$TMP_NONCDN"
+
+          echo "==================================================================="
 
           echo "▶ Deriving CDN IP list…"
-          cat "$TMP_IP_ONLY" | anew -d "$TMP_NONCDN" | anew -q "$TMP_CDN"
+          cat "$TMP_IP_ONLY" | anew -d "$TMP_NONCDN" > "$TMP_CDN"
+
+          echo "✅ All done. TMP_CDN contains $(wc -l < "$TMP_CDN") IP"
+
+          head -n50 "$TMP_CDN"
+
+          echo "==================================================================="
 
           echo "▶ Running smap on non‑CDN IPs…"
           smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
 
+          echo "✅ All done. TMP_SMAP_NONCDN contains $(wc -l < "$TMP_SMAP_NONCDN") IP" 
+
+          echo "==================================================================="
+          head -n50 "$TMP_SMAP_NONCDN"
+
+          echo "==================================================================="
+          
           echo "▶ Merging non‑CDN and CDN IP lists into $SMAP_FILE…"
           # TMP_SMAP_NONCDN has IP:PORT, TMP_CDN has bare IP
-          cat "$TMP_SMAP_NONCDN" "$TMP_CDN" \
-            | sort -u > "$SMAP_FILE"
+          
+          cat "$TMP_SMAP_NONCDN" "$TMP_CDN" | sort -u > "$SMAP_FILE"
+
+          echo "✅ All done. SMAP_FILE contains $(wc -l < "$SMAP_FILE") IP" 
+
+          echo "==================================================================="
+          head -n50 "$SMAP_FILE"
+
+          echo "==================================================================="
 
           echo "▶ Joining with $SMAP_FILE to produce subdomain:port or subdomain…"
           awk -F: '
@@ -515,7 +548,7 @@ jobs:
         run: |
           # This step now uses the output from puredns as its source
           RESOLVED_FILE="puredns_resolved.txt"
-          WILDCARD_FILE="wildcard_sub.txt"
+          #WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
           PORTS_INPUT_FILE="subdomain_ports.txt"
         
