@@ -677,7 +677,6 @@ jobs:
   commit_all_results:
     name: Commit All Results
     needs: merge_results 
-    if: needs.merge_results.outputs.has_results == 'true' # Added condition to not run if there are no results
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/pcoder7/spider-puredns-actions:latest
