@@ -387,7 +387,14 @@ jobs:
             go install github.com/ImAyrix/cut-cdn@latest
           else
             echo "cut-cdn already in cache"
-          fi          
+          fi     
+
+          if ! command -v naabu >/dev/null; then
+            echo "Installing naabu…"
+            go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          else
+            echo "naabu already in cache"
+          fi
 
           pip3 install --no-cache-dir ipaddress
           
