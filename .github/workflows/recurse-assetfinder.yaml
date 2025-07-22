@@ -702,6 +702,7 @@ jobs:
   commit_all_results:
     name: Commit All Results
     needs: merge_results 
+    if: needs.merge_results.outputs.has_results == 'true' # Added condition to not run if there are no results
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/pcoder7/spider-puredns-actions:latest
@@ -724,37 +725,65 @@ jobs:
         run: |
           set -e
           
-          echo "Cloning store-recon to commit results..."
+          # --- FIX: Define the absolute path to the downloaded results ---
+          # The artifact is downloaded relative to the workspace root.
+          RESULTS_DIR="${GITHUB_WORKSPACE}/final_results"
+          
+          if [ ! -d "$RESULTS_DIR" ] || [ -z "$(ls -A "$RESULTS_DIR")" ]; then
+            echo "::warning:: Results directory is empty or does not exist. Nothing to commit."
+            exit 0
+          fi
+
+          echo "Cloning ${STORE} to commit results..."
           git config --global user.name "Assetfinder Bot"
           git config --global user.email "actions-bot@users.noreply.github.com"
           
           TMP_DIR="$(mktemp -d)"
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
           cd "$TMP_DIR" 
+
           echo "Merging new consolidated results into the repository..."
-          for domain_dir in ../final_results/*; do
+
+          # --- FIX: Loop over the absolute path to the results ---
+          # This loop now correctly finds the per-domain directories.
+          for domain_dir in "${RESULTS_DIR}"/*; do
+            if [ ! -d "$domain_dir" ]; then continue; fi # Skip if not a directory
+            
             domain_name=$(basename "$domain_dir")
-            source_file="$domain_dir/puredns_results.txt"
-            dest_dir="results/$domain_name"
-            dest_file="$dest_dir/puredns_results.txt"
-            
-            mkdir -p "$dest_dir"
-            
-            temp_merged_file=$(mktemp)
-            if [ -f "$dest_file" ]; then
-              cat "$source_file" "$dest_file" | sort -u > "$temp_merged_file"
-            else
-              sort -u "$source_file" > "$temp_merged_file"
+            dest_repo_dir="results/$domain_name"
+            mkdir -p "$dest_repo_dir"
+
+            # --- MODIFICATION: Process both result files ---
+
+            # 1. Process puredns_results.txt
+            source_puredns_file="$domain_dir/puredns_results.txt"
+            dest_puredns_file="$dest_repo_dir/puredns_results.txt"
+
+            if [ -f "$source_puredns_file" ]; then
+              echo "  -> Merging puredns_results.txt for $domain_name"
+              # Use anew for a cleaner merge syntax
+              cat "$source_puredns_file" | anew -q "$dest_puredns_file"
             fi
-            mv "$temp_merged_file" "$dest_file"
+            
+            # 2. Process subdomain_ports.txt
+            source_ports_file="$domain_dir/subdomain_ports.txt"
+            dest_ports_file="$dest_repo_dir/subdomain_ports.txt"
+            
+            if [ -f "$source_ports_file" ]; then
+              echo "  -> Merging subdomain_ports.txt for $domain_name"
+              # Use anew again for the ports file
+              cat "$source_ports_file" | anew -q "$dest_ports_file"
+            fi
           done
           
+          # --- FIX: The git diff command is correct, no changes needed here ---
           if git diff --cached --quiet && git diff --quiet; then
-            echo "No changes to commit in store-recon."
+            echo "No changes to commit in ${STORE}."
             exit 0
           fi
           
+          echo "Committing and pushing changes to ${STORE}..."
           git add results/
-          git commit -m "feat: Add new subdomains from distributed recon scan (Run ID ${{ github.run_id }})"
+          git commit -m "feat: Add new assets from distributed recon scan (Run ID ${{ github.run_id }})"
           git push origin main
-          echo "✅ Successfully pushed new consolidated results to store-recon."
+          echo "✅ Successfully pushed new consolidated results to ${STORE}."
