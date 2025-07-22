@@ -435,11 +435,11 @@ jobs:
                                
           echo "✅ PureDNS resolution complete. $(wc -l < "$PUREDNS_FILE") subdomains were successfully resolved."
 
-          cat "$PUREDNS_FILE" | inscope  > "$RESOLVED_FILE" || true
+          cat "$PUREDNS_FILE" | inscope -s .scope > "$RESOLVED_FILE" || true
 
           # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope > "$MASSDNS_FILE" || true
+          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope -s .scope > "$MASSDNS_FILE" || true
 
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
           
