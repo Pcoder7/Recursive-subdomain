@@ -494,7 +494,7 @@ jobs:
           echo "==================================================================="
 
           echo "▶ Running smap on non‑CDN IPs…"
-          naabu -list "$TMP_NONCDN" -o "$TMP_SMAP_NONCDN" -skip-host-discovery -c 100 -retries 3 -timeout 2000 -no-color >/dev/null 2>&1
+          naabu -list "$TMP_NONCDN" -o "$TMP_SMAP_NONCDN" -skip-host-discovery -c 100 -retries 3 -timeout 2000 -no-color -silent
           
           # smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
 
