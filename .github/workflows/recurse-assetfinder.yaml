@@ -445,7 +445,7 @@ jobs:
           FNR==NR{if($0)patterns[++c]=$0;next} \
           !setup{regex="";for(i=1;i<=c;i++){regex=regex (i>1?"|":"") "("patterns[i]")"};if(regex=="")regex="^\b$";setup=1} \
           $2=="A" && $1~regex \
-          ' .scope "$TMP_CLEANMASSDNS" | anew -q > "$MASSDNS_FILE"
+          ' .scope "$TMP_CLEANMASSDNS" | anew -q "$MASSDNS_FILE"
           
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
 
