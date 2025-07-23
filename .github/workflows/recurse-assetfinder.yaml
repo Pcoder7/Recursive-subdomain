@@ -440,7 +440,7 @@ jobs:
 
           cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' > "$TMP_CLEANMASSDNS" 
 
-          grep -E -f <(sed 's/\$$//' .scope) "TMP_CLEANMASSDNS" --color=never > "$MASSDNS_FILE" || true
+          grep -E -f <(sed 's/\$$//' .scope) "$TMP_CLEANMASSDNS" --color=never > "$MASSDNS_FILE" || true
 
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
 
