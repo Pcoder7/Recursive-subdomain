@@ -446,7 +446,7 @@ jobs:
 
           rm -f "$TMP_CLEANMASSDNS" 
           
-          cat "$MASSDNS_FILE"
+          cat "$MASSDNS_FILE" "$MASSDNS" "$PUREDNS_FILE"
           
       - name: Map subdomains to ports with CDN filtering
         id: map_subdomains_cdn
@@ -562,7 +562,7 @@ jobs:
           head -n50 "$OUTPUT"
 
           # cleanup
-          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$PUREDNS_FILE" "$MASSDNS" "$TMP_RUSTSCAN"   
+          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$TMP_RUSTSCAN"   
       # ====================================================================
       # MOVED AND MODIFIED STEP: Sorting
       # ====================================================================
@@ -744,59 +744,89 @@ jobs:
           name: consolidated-recon-results
           path: final_results
   
-      - name: Organize and Push to store-recon
+      - name: Organize and Push to store-recon    
         shell: bash
         env:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
           STORE: ${{ secrets.STORE }}
         run: |
+          # Fails the script immediately if any command has a non-zero exit code.
           set -e
           
+          # Define the path to the downloaded artifact results for clarity.
           RESULTS_DIR="${GITHUB_WORKSPACE}/final_results"
           
+          # Guard clause: Exit cleanly if there are no results to process.
           if [ ! -d "$RESULTS_DIR" ] || [ -z "$(ls -A "$RESULTS_DIR")" ]; then
             echo "::warning:: Results directory is empty or does not exist. Nothing to commit."
             exit 0
           fi
+          
           echo "Cloning ${STORE} to commit results..."
+          # Configure the git identity for the upcoming commit.
           git config --global user.name "Assetfinder Bot"
           git config --global user.email "actions-bot@users.noreply.github.com"
           
+          # Create a secure temporary directory and clone the repository into it.
           TMP_DIR="$(mktemp -d)"
-          # Cloning is successful, which configures the remote with the PAT for the push.
           git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
+          # Change the current directory to be inside the cloned repository.
           cd "$TMP_DIR" 
+          
           echo "Merging new consolidated results into the repository..."
+          # Loop over each domain directory found in the artifact.
           for domain_dir in "${RESULTS_DIR}"/*; do
+            # Skip any item that is not a directory.
             if [ ! -d "$domain_dir" ]; then continue; fi
             
             domain_name=$(basename "$domain_dir")
             dest_repo_dir="results/$domain_name"
+            # Safely ensure the destination directory exists.
             mkdir -p "$dest_repo_dir"
 
-            # --- MODIFICATION 1: puredns_results.txt -> all_subdomains.txt ---
+            # --- MERGE BLOCK 1: puredns_results.txt -> all_subdomains.txt ---
             source_puredns_file="$domain_dir/puredns_results.txt"
-            # The destination file in the repo is now named 'all_subdomains.txt'
             dest_all_subs_file="$dest_repo_dir/all_subdomains.txt"
-
-            if [ -s "$source_puredns_file" ]; then # Use -s to check if source has content
+            
+            # Process only if the source file exists and has content.
+            if [ -s "$source_puredns_file" ]; then
               echo "  -> Merging puredns results into '$dest_all_subs_file'"
-              cat "$source_puredns_file" | anew -q "$dest_all_subs_file"
+              temp_merged_file_1=$(mktemp)
+              if [ -f "$dest_all_subs_file" ]; then
+                # Merge existing and new data.
+                cat "$source_puredns_file" "$dest_all_subs_file" | sort -u > "$temp_merged_file_1"
+              else
+                # =================== BUG FIX IS HERE ===================
+                # Create new file from source. Using the correct variable now.
+                sort -u "$source_puredns_file" > "$temp_merged_file_1"
+                # =======================================================
+              fi
+              # Safely replace the old file with the new merged version.
+              mv "$temp_merged_file_1" "$dest_all_subs_file"
+            else
+              echo "  -> INFO: Skipping merge for '$dest_all_subs_file' as source 'puredns_results.txt' is empty or missing."
             fi
             
-            # --- MODIFICATION 2: subdomain_ports.txt -> puredns_result.txt ---
+            # --- MERGE BLOCK 2: subdomain_ports.txt -> puredns_result.txt ---
             source_ports_file="$domain_dir/subdomain_ports.txt"
-            # The destination file in the repo is now named 'puredns_result.txt'
             dest_puredns_file="$dest_repo_dir/puredns_result.txt"
             
-            # This check is now CRITICAL. Only process if the source file has content.
-            # An empty source file should not create an empty destination file.
+            # Process only if this second source file exists and has content.
             if [ -s "$source_ports_file" ]; then
               echo "  -> Merging port data into '$dest_puredns_file'"
-              cat "$source_ports_file" | anew -q "$dest_puredns_file"
+              temp_merged_file_2=$(mktemp)
+              if [ -f "$dest_puredns_file" ]; then
+                # Merge existing and new data.
+                cat "$source_ports_file" "$dest_puredns_file" | sort -u > "$temp_merged_file_2"
+              else
+                # Create new file from source. This block was already correct.
+                sort -u "$source_ports_file" > "$temp_merged_file_2"
+              fi
+              # Safely replace the old file with the new merged version.
+              mv "$temp_merged_file_2" "$dest_puredns_file"
             else
-              echo "  -> Skipping empty subdomain_ports.txt for $domain_name"
+              echo "  -> INFO: Skipping merge for '$dest_puredns_file' as source 'subdomain_ports.txt' is empty or missing."
             fi
           done
           
@@ -804,16 +834,16 @@ jobs:
           git status
           echo "---------------------------------------"
           
-          # The git diff command correctly checks for any changes in the working directory.
+          # Robustly check if any files have actually changed.
           if git diff --cached --quiet && git diff --quiet; then
-            echo "No new data to commit in ${STORE}."
+            echo "No new unique data to commit in ${STORE}."
             exit 0
           fi
           
           echo "Committing and pushing changes to ${STORE}..."
+          # Stage, commit, and push the changes.
           git add results/
           git commit -m "feat: Add new assets from distributed recon scan (Run ID ${{ github.run_id }})"
-          # The push command implicitly uses the PAT from the clone URL.
           git push -v origin main
           
           echo "✅ Successfully pushed new consolidated results to ${STORE}."
