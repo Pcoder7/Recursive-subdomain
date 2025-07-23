@@ -473,16 +473,11 @@ jobs:
           TMP_RUSTSCAN=$(mktemp)
 
           echo "▶ Cleaning & extracting A‑records from $MASSDNS_FILE…"
-          sed '/^[[:space:]]*$/d' "$MASSDNS_FILE" \
-            | awk '$2=="A" {
-                sub(/\.$/,"",$1)     # strip trailing dot
-                print $3, $1         # IP SUBDOMAIN
-              }' \
-            | sort -k1,1 > "$TMP_IP2SUB"
+          # IP SUBDOMAIN
+          awk '{ print $3, $1 }' | sort -k1,1 > "$TMP_IP2SUB"
 
           echo "▶ Pulling unique IPs…"
-          cut -d' ' -f1 "$TMP_IP2SUB" \
-            | sort -u > "$TMP_IP_ONLY"
+          cut -d' ' -f1 "$TMP_IP2SUB" | sort -u > "$TMP_IP_ONLY"
 
           echo "▶ Filtering non‑CDN IPs with cut-cdn…"
           cat "$TMP_IP_ONLY" | cut-cdn -ua -t 50 -silent -o "$TMP_NONCDN"
@@ -494,7 +489,6 @@ jobs:
           echo "==================================================================="
 
           echo "✅ All done. TMP_NONCDN contains $(wc -l < "$TMP_NONCDN") IP"
-
 
           head -n5 "$TMP_NONCDN"
 
