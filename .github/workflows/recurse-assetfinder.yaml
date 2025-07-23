@@ -349,9 +349,7 @@ jobs:
           echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
           
           split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
-
-          naabu -h
-                   
+                             
           parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"' ::: ${SUB_CHUNK_DIR}/sub_chunk_*
           
           # ─── MERGE + DEDUPE ─────────────────────────────────────────────────────────
@@ -410,6 +408,7 @@ jobs:
           RAW_RESULTS_FILE="raw_subdomain_results.txt"
           PUREDNS_FILE="puredns_file.txt"
           RESOLVED_FILE="puredns_resolved.txt"
+          TMP_CLEANMASSDNS=$(mktemp)
           MASSDNS="massdns.txt"
           #WILDCARD_FILE="wildcard_sub.txt"
           MASSDNS_FILE="massdns_file.txt"
@@ -439,9 +438,13 @@ jobs:
 
           # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
 
-          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' | inscope -s .scope > "$MASSDNS_FILE" || true
+          cat "$MASSDNS" | sed '/^[[:space:]]*$/d' | awk '{ sub(/\.$/,"",$1); print }' > "$TMP_CLEANMASSDNS" 
+
+          grep -E -f <(sed 's/\$$//' .scope) "TMP_CLEANMASSDNS" --color=never > "$MASSDNS_FILE" || true
 
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
+
+          rm -f "$TMP_CLEANMASSDNS" 
           
           cat "$MASSDNS_FILE"
           
@@ -462,6 +465,7 @@ jobs:
           TMP_NONCDN=$(mktemp)
           TMP_CDN=$(mktemp)
           TMP_SMAP_NONCDN=$(mktemp)
+          TMP_RUSTSCAN=$(mktemp)
 
           echo "▶ Cleaning & extracting A‑records from $MASSDNS_FILE…"
           sed '/^[[:space:]]*$/d' "$MASSDNS_FILE" \
@@ -501,7 +505,10 @@ jobs:
           echo "==================================================================="
 
           echo "▶ Running smap on non‑CDN IPs…"
-          naabu -list "$TMP_NONCDN" -o "$TMP_SMAP_NONCDN" -skip-host-discovery -c 100 -retries 3 -timeout 2000 -no-color -silent
+          # naabu -list "$TMP_NONCDN" -o "$TMP_SMAP_NONCDN" -skip-host-discovery -c 100 -retries 3 -timeout 2000 -no-color -silent
+          rustscan -a "$TMP_NONCDN" -p 80,443 --no-banner  -t 1000 --tries 1 -u 20000 --scan-order "Random"  -b 100 --greppable --accessible > "$TMP_RUSTSCAN"
+          
+          cat "$TMP_RUSTSCAN" | awk -F ' -> ' '{ gsub(/[\[\]]/, "", $2); n = split($2, p, ","); for(i=1;i<=n;i++) print $1 ":" p[i] }' | anew -q "$TMP_SMAP_NONCDN"
           
           # smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN"
 
@@ -555,7 +562,7 @@ jobs:
           head -n50 "$OUTPUT"
 
           # cleanup
-          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$PUREDNS_FILE" "$MASSDNS"    
+          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$PUREDNS_FILE" "$MASSDNS" "$TMP_RUSTSCAN"   
       # ====================================================================
       # MOVED AND MODIFIED STEP: Sorting
       # ====================================================================
