@@ -474,7 +474,7 @@ jobs:
 
           echo "▶ Cleaning & extracting A‑records from $MASSDNS_FILE…"
           # IP SUBDOMAIN
-          awk '{ print $3, $1 }' | sort -k1,1 > "$TMP_IP2SUB"
+          awk '{ print $3, $1 }' "$MASSDNS_FILE" | sort -k1,1 > "$TMP_IP2SUB"
 
           echo "▶ Pulling unique IPs…"
           cut -d' ' -f1 "$TMP_IP2SUB" | sort -u > "$TMP_IP_ONLY"
