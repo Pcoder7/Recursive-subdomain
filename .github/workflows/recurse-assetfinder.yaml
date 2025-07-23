@@ -70,7 +70,7 @@ jobs:
             echo "Processing Root Domain: $ROOT_DOMAIN"
             
             TEMP_ROOT_LIST="${TMPDIR}/${ROOT_DOMAIN}-list.txt"
-            grep -E "(^|\\.)${ROOT_DOMAIN//./\\.}(\$)" all-resolved-subdomains.txt > "$TEMP_ROOT_LIST"
+            grep -E "(^|\\.)${ROOT_DOMAIN//./\\.}(\$)" all-resolved-subdomains.txt > "$TEMP_ROOT_LIST" || true
             if [ ! -s "$TEMP_ROOT_LIST" ]; then continue; fi
             TEMP_SEED_LIST_DOMAIN="${TMPDIR}/${ROOT_DOMAIN}-seeds.txt"
             > "$TEMP_SEED_LIST_DOMAIN"
@@ -594,7 +594,7 @@ jobs:
             # --- Original Logic for puredns results (unchanged) ---
             outfile="results/$parent/puredns_results.txt"
             echo "  -> Filtering puredns results for '$parent' into '$outfile'"
-            grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "$outfile"
+            grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "$outfile" || true
 
             # --- New Logic to sort the subdomain_ports.txt file ---
             ports_outfile="results/$parent/subdomain_ports.txt"
