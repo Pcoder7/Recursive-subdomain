@@ -440,13 +440,18 @@ jobs:
 
           awk 'NF { sub(/\.$/,"",$1); print }' "$MASSDNS" > "$TMP_CLEANMASSDNS"
 
-          grep -E -f <(sed 's/\$$//' .scope) "$TMP_CLEANMASSDNS" --color=never > "$MASSDNS_FILE" || true
-
+          awk ' \
+          {gsub(/\r$/,"");sub(/^[ \t]+/,"");sub(/[ \t]+$/,"")} \
+          FNR==NR{if($0)patterns[++c]=$0;next} \
+          !setup{regex="";for(i=1;i<=c;i++){regex=regex (i>1?"|":"") "("patterns[i]")"};if(regex=="")regex="^\b$";setup=1} \
+          $2=="A" && $1~regex \
+          ' .scope "$TMP_CLEANMASSDNS" | anew -q > "$MASSDNS_FILE"
+          
           echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
 
-          rm -f "$TMP_CLEANMASSDNS" 
+          rm -f "$TMP_CLEANMASSDNS" "$MASSDNS" "$PUREDNS_FILE"
           
-          cat "$MASSDNS_FILE" "$MASSDNS" "$PUREDNS_FILE"
+          cat "$MASSDNS_FILE" | sort -u 
           
       - name: Map subdomains to ports with CDN filtering
         id: map_subdomains_cdn
@@ -484,14 +489,14 @@ jobs:
 
           echo "✅ All done. TMP_IP_ONLY contains $(wc -l < "$TMP_IP_ONLY") IP"
 
-          head -n50 "$TMP_IP_ONLY"
+          head -n5 "$TMP_IP_ONLY"
 
           echo "==================================================================="
 
           echo "✅ All done. TMP_NONCDN contains $(wc -l < "$TMP_NONCDN") IP"
 
 
-          head -n50 "$TMP_NONCDN"
+          head -n5 "$TMP_NONCDN"
 
           echo "==================================================================="
 
@@ -500,7 +505,7 @@ jobs:
 
           echo "✅ All done. TMP_CDN contains $(wc -l < "$TMP_CDN") IP"
 
-          head -n50 "$TMP_CDN"
+          head -n5 "$TMP_CDN"
 
           echo "==================================================================="
 
