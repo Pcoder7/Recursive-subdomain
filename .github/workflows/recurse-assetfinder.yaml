@@ -26,11 +26,7 @@ jobs:
   prepare_all_chunks_and_package:
     name: Prepare Seed Chunks & Package
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/pcoder7/spider-puredns-actions:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GHCR_TOKEN }}
+
     outputs:
       all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
       total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
@@ -40,6 +36,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules & binaries
+        uses: actions/cache@v3
+        with:
+          path: |
+            $HOME/go/pkg/mod
+            ~/.cache/go-build
+            $HOME/go/bin
+          key: ${{ runner.os }}-go-cache-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-go-cache-
+
+      - name: Install Tools
+        run: |          
+          
+          if ! command -v dsieve >/dev/null; then
+            echo "Installing dsieve…"
+            go install github.com/trickest/dsieve@latest
+          else
+            echo "dsieve already in cache"
+          fi    
+         
+          # Installing inscope
+          if ! command -v anew >/dev/null; then
+            echo "Installing anew"
+            go install -v github.com/tomnomnom/anew@latest
+          else
+            echo "anew already in cache"
+          fi   
+            
       # STEP 1: Build the smart seed list from the store-recon repo
       - name: Build Smart Tiered & Randomized Seed List
         id: create_final_list
@@ -47,7 +77,7 @@ jobs:
         env:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
-          STORE: ${{secrets.STORE}}# PAT with access to the store-recon repo
+          STORE: ${{secrets.STORE}}
         run: |
           set -e
           echo "INFO: Performing a fast, shallow clone of the results repository..."
@@ -261,6 +291,7 @@ jobs:
           echo "Constructed JSON Payload: $JSON_PAYLOAD"
              # Set the constructed JSON string as an output of this step
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+      
       - name: DEBUG - Show Tertiary Inputs String
         if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
         run: |
@@ -750,11 +781,7 @@ jobs:
     name: Commit All Results
     needs: merge_results 
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/pcoder7/spider-puredns-actions:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GHCR_TOKEN }}
+
     steps:
       - name: Download the single consolidated results artifact
         uses: actions/download-artifact@v4
