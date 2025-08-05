@@ -254,10 +254,10 @@ jobs:
          # echo "Pausing for 30 seconds to space out worker triggers and avoid platform throttling..."
           #sleep 30
 
-      - name: Sleep for 20 seconds
-        uses: jakejarvis/wait-action@master
-        with:
-          time: '20s'
+      - name: Add Delay Between API Triggers for Tertiary Account
+        run: |
+          echo "Pausing for 30 seconds to avoid API rate-limiting before triggering the Tertiary account..."
+          sleep 30
 
       # ====================================================================
       
