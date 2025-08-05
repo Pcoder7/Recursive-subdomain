@@ -199,12 +199,13 @@ jobs:
               "secondary_matrix_json": $matrix_as_a_string
             }')
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+      
       - name: Trigger Secondary Account Workflow
         if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: recurse.yml # IMPORTANT: This must match the workflow name in the secondary repo
-          repo: ${{ secrets.ACCOUNT2_REPO_OWNER }}/${{ secrets.STORE }} # Assuming worker workflow is in store-recon repo
+          repo: ${{ secrets.ACCOUNT2_REPO_OWNER }}/${{ secrets.ACCOUNT2_REPO_NAME }}# Assuming worker workflow is in store-recon repo
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload_secondary.outputs.json_string }}
           ref: main
