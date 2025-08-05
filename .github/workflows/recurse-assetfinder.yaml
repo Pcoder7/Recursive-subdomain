@@ -203,7 +203,7 @@ jobs:
         if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: run-assetfinder.yml # IMPORTANT: This must match the workflow name in the secondary repo
+          workflow: recurse.yml # IMPORTANT: This must match the workflow name in the secondary repo
           repo: ${{ secrets.ACCOUNT2_REPO_OWNER }}/${{ secrets.STORE }} # Assuming worker workflow is in store-recon repo
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload_secondary.outputs.json_string }}
