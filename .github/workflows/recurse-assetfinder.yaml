@@ -13,14 +13,16 @@ env:
   DISTRIBUTION_THRESHOLD: 20      # The minimum total chunks to trigger 3-way distribution
   PRIMARY_PERCENTAGE: 45          # 45% for the primary account
   SECONDARY_PERCENTAGE: 40        # 40% for the secondary account
-
+  
+  STORE_REPO_NAME: ${{ secrets.STORE }}
   # --- Account 2 Details (for triggering and committing) ---
-  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER || 'pushrockzz' }}
-  STORE_REPO_NAME: ${{ secrets.STORE }} # The 'store-recon' repo name
+  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME  }} 
+   # The 'store-recon' repo name
 
   # --- Account 3 Details ---
-  ACCOUNT3_REPO_OWNER: ${{ secrets.ACCOUNT3_REPO_OWNER || 'Sari2705' }}
-  ACCOUNT3_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME || 'puredns-resolve' }} # Or a dedicated repo
+  ACCOUNT3_REPO_OWNER: ${{ secrets.ACCOUNT3_REPO_OWNER  }}
+  ACCOUNT3_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME  }} 
 
 jobs:
   prepare_all_chunks_and_package:
