@@ -9,7 +9,7 @@ permissions:
 
 env:
   # --- Chunking and Distribution Configuration ---
-  LINES_PER_CHUNK: 8             # MODIFIED: As requested for assetfinder seeds
+  LINES_PER_CHUNK: 11             # MODIFIED: As requested for assetfinder seeds
   DISTRIBUTION_THRESHOLD: 20      # The minimum total chunks to trigger 3-way distribution
   PRIMARY_PERCENTAGE: 45          # 45% for the primary account
   SECONDARY_PERCENTAGE: 40        # 40% for the secondary account
@@ -26,7 +26,11 @@ jobs:
   prepare_all_chunks_and_package:
     name: Prepare Seed Chunks & Package
     runs-on: ubuntu-latest
-
+    container:
+      image: ghcr.io/pcoder7/spider-puredns-actions:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
     outputs:
       all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
       total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
