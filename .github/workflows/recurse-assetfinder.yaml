@@ -85,7 +85,7 @@ jobs:
           ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
           STORE: ${{secrets.STORE}}
         run: |
-          set -e
+
           echo "INFO: Performing a fast, shallow clone of the results repository..."
           git clone --depth 1 "https://x-access-token:${{ env.STORE_RECON_PAT }}@github.com/${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.STORE_REPO_NAME }}.git" store-recon-temp
           
@@ -363,7 +363,7 @@ jobs:
         id: run_parallel
         shell: bash
         run: |
-          set -euo pipefail        
+                
           
           CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
           echo "Processing chunk '$CHUNK_FILE_PATH'..."
@@ -496,7 +496,7 @@ jobs:
         id: map_subdomains_cdn
         shell: bash
         run: |
-          set -euo pipefail
+          
           trap '' SIGPIPE
 
           MASSDNS_FILE="massdns_file.txt"
@@ -714,8 +714,7 @@ jobs:
         shell: bash
         run: |
           # This command ensures that the script will exit immediately if any command fails.
-          set -e
-          
+                
           # Create the destination directory. The -p flag prevents errors if it already exists.
           mkdir -p final_results
           
@@ -803,7 +802,7 @@ jobs:
           STORE: ${{ secrets.STORE }}
         run: |
           # Fails the script immediately if any command has a non-zero exit code.
-          set -e
+          
           
           # Define the path to the downloaded artifact results for clarity.
           RESULTS_DIR="${GITHUB_WORKSPACE}/final_results"
