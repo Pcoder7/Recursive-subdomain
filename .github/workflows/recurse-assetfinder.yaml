@@ -308,7 +308,7 @@ jobs:
         if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: resolve.yml
+          workflow: recurse.yml
           repo: ${{ secrets.ACCOUNT3_REPO_OWNER }}/${{ secrets.ACCOUNT3_REPO_NAME }}
           token: ${{ secrets.PAT_FOR_TERTIARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload_tertiary.outputs.json_string }}
