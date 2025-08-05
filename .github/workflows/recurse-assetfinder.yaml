@@ -213,6 +213,7 @@ jobs:
       # The rest of this job (preparing payloads and triggering) is complex but can be copied
       # verbatim from your original workflow. Just ensure the 'workflow:' name is correct.
       # For brevity, I'll show one trigger block. Repeat for tertiary.
+      
       - name: Prepare Trigger Payload For Secondary
         id: prepare_payload_secondary
         if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
@@ -264,9 +265,8 @@ jobs:
       # ====================================================================
       
       - name: Prepare Trigger Payload For Tertiary
-        # This is a NEW step, a copy of the secondary payload step for Account 3.
         id: prepare_payload_tertiary
-        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
         shell: bash
         run: |
           MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.tertiary_matrix }}'
@@ -299,7 +299,7 @@ jobs:
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
       
       - name: DEBUG - Show Tertiary Inputs String
-        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
         run: |
           echo "DEBUG: Inputs for TERTIARY account:"
           # echo "${{ steps.prepare_payload_tertiary.outputs.json_string }}"    
@@ -307,7 +307,7 @@ jobs:
       - name: Trigger Tertiary Account Workflow
         # This is a NEW step, a copy of the secondary trigger step for Account 3.
         id: trigger_tertiary
-        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: recurse.yml
