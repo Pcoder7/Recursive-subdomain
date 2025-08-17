@@ -897,4 +897,20 @@ jobs:
           git push -v origin main
           
           echo "✅ Successfully pushed new consolidated results to ${STORE}."
+
+
+  trigger_http_multiple_three:
+    name: Trigger http multiple three
+    needs: [commit_all_results]
+    
+    if: success() 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger next workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: httpx_dispatch_three.yml
+          repo: Pcoder7/http-multiple-three
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
           
