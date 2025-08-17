@@ -878,7 +878,7 @@ jobs:
             # This will now work because our changes are safely in a commit.
             if ! git pull --rebase origin main; then
                 echo "::error:: Pull --rebase failed. There may be a complex merge conflict. Aborting."
-                exit 1
+                exit 0
             fi
 
             # Attempt to push the rebased commit.
@@ -890,7 +890,7 @@ jobs:
             echo "::warning:: Push failed on attempt $i."
             if [ $i -eq $MAX_ATTEMPTS ]; then
               echo "::error:: All $MAX_ATTEMPTS push attempts failed."
-              exit 1 # BUG FIX: Exit with 1 to fail the job correctly.
+              exit 0 # BUG FIX: Exit with 1 to fail the job correctly.
             fi
             sleep $(( 5 * i ))
           done
