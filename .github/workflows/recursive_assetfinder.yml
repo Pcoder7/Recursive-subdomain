@@ -1,0 +1,920 @@
+name: Distributed Recursive Enumeration
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # For creating matrix.json and artifacts
+  actions: write    # For triggering workflows in other repositories
+
+env:
+  # --- Chunking and Distribution Configuration ---
+  LINES_PER_CHUNK: 12             # MODIFIED: As requested for assetfinder seeds
+  DISTRIBUTION_THRESHOLD: 20      # The minimum total chunks to trigger 3-way distribution
+  PRIMARY_PERCENTAGE: 45          # 45% for the primary account
+  SECONDARY_PERCENTAGE: 40        # 40% for the secondary account
+  
+  STORE_REPO_NAME: ${{ secrets.STORE }}
+  # --- Account 2 Details (for triggering and committing) ---
+  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME  }} 
+   # The 'store-recon' repo name
+
+  # --- Account 3 Details ---
+  ACCOUNT3_REPO_OWNER: ${{ secrets.ACCOUNT3_REPO_OWNER  }}
+  ACCOUNT3_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME  }} 
+
+jobs:
+  prepare_all_chunks_and_package:
+    name: Prepare Seed Chunks & Package
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pcoder7/spider-puredns-actions:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
+    outputs:
+      all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
+      total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
+      chunk_package_artifact_name: "assetfinder-chunks-package-${{ github.run_id }}"
+    if: ${{ github.actor == 'Pcoder7' }}
+    steps:
+      - name: Log trigger info
+        run: |
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Run id: ${{ github.run_id }}"    
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules & binaries
+        uses: actions/cache@v3
+        with:
+          path: |
+            $HOME/go/pkg/mod
+            ~/.cache/go-build
+            $HOME/go/bin
+          key: ${{ runner.os }}-go-cache-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-go-cache-
+
+      - name: Install Tools
+        run: |          
+          
+          if ! command -v dsieve >/dev/null; then
+            echo "Installing dsieve…"
+            go install github.com/trickest/dsieve@latest
+          else
+            echo "dsieve already in cache"
+          fi    
+         
+          # Installing inscope
+          if ! command -v anew >/dev/null; then
+            echo "Installing anew"
+            go install -v github.com/tomnomnom/anew@latest
+          else
+            echo "anew already in cache"
+          fi   
+            
+      # STEP 1: Build the smart seed list from the store-recon repo
+      - name: Build Smart Tiered & Randomized Seed List
+        id: create_final_list
+        shell: bash
+        env:
+          STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+          STORE: ${{secrets.STORE}}
+        run: |
+
+          echo "INFO: Performing a fast, shallow clone of the results repository..."
+          git clone --depth 1 "https://x-access-token:${{ env.STORE_RECON_PAT }}@github.com/${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.STORE_REPO_NAME }}.git" store-recon-temp
+          
+          echo "INFO: Aggregating all results into a master list..."
+          find store-recon-temp/results -type f -name "puredns_result.txt" -exec awk '{print $1}' {} + > all-resolved-subdomains.txt
+          if [ ! -s all-resolved-subdomains.txt ]; then
+              echo "::warning:: Master subdomain list is empty. No seeds to generate."
+              touch final-subdomain-list.txt
+              exit 0
+          fi
+          echo "INFO: Extracting unique root domains..."
+          dsieve -if all-resolved-subdomains.txt -f 2 | sort -u > unique_root_domains.txt
+          > final-subdomain-list.txt
+          echo "INFO: Building smart seed list for each root domain..."
+          while read -r ROOT_DOMAIN; do
+            if [ -z "$ROOT_DOMAIN" ]; then continue; fi
+            echo "====================================================="
+            echo "Processing Root Domain: $ROOT_DOMAIN"
+            
+            TEMP_ROOT_LIST="${TMPDIR}/${ROOT_DOMAIN}-list.txt"
+            grep -E "(^|\\.)${ROOT_DOMAIN//./\\.}(\$)" all-resolved-subdomains.txt > "$TEMP_ROOT_LIST" || true
+            if [ ! -s "$TEMP_ROOT_LIST" ]; then continue; fi
+            TEMP_SEED_LIST_DOMAIN="${TMPDIR}/${ROOT_DOMAIN}-seeds.txt"
+            > "$TEMP_SEED_LIST_DOMAIN"
+            
+            # Tier 1: Random sample of the top-tier
+            echo "  -> Getting a random 250 sample from the top 500 subdomains..."
+            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 500 | shuf | head -n 250 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            
+            # Tier 2: Random sample of the mid-tier
+            echo "  -> Getting a random 150 sample from the mid-tier (ranks 501-1000)..."
+            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            cat "$TEMP_SEED_LIST_DOMAIN" >> final-subdomain-list.txt
+          done < unique_root_domains.txt
+          
+          echo "INFO: Performing final de-duplication of the master seed list..."
+          mv final-subdomain-list.txt final-subdomain-list.tmp
+          sort -u final-subdomain-list.tmp > final-subdomain-list.txt
+          rm final-subdomain-list.tmp
+          echo "SUCCESS: 'final-subdomain-list.txt' created with $(wc -l < final-subdomain-list.txt) total unique seeds."
+          rm -rf store-recon-temp
+      # STEP 2: Chunk the final seed list for distribution
+      - name: Build Full Matrix & Create Chunks
+        id: build_full_matrix
+        shell: bash
+        run: |
+          JSON_MATRIX='[]'
+          if [ ! -s final-subdomain-list.txt ]; then
+            echo "WARNING: final-subdomain-list.txt is empty. No chunks will be generated."
+          else
+            echo "INFO: Creating chunk directory 'chunks/all-seeds'..."
+            mkdir -p chunks/all-seeds
+            
+            echo "INFO: Splitting 'final-subdomain-list.txt' into chunks of $LINES_PER_CHUNK lines..."
+            split -l "$LINES_PER_CHUNK" -a 4 --numeric-suffixes=1 final-subdomain-list.txt "chunks/all-seeds/chunk_"
+            
+            while IFS= read -r chunk_file_path; do
+              JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg c "$chunk_file_path" '. + [{chunk:$c}]')
+            done < <(find "chunks/all-seeds/" -name 'chunk_*' -type f)
+          fi
+          
+          TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
+          echo "FINAL_BUILD_INFO: Total chunks in matrix: $TOTAL_CHUNKS"
+          echo "$JSON_MATRIX" > full_matrix.json
+          echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
+          echo "total_chunks=$TOTAL_CHUNKS" >> $GITHUB_OUTPUT
+      # STEP 3: Package the chunks into an artifact
+      - name: Package All Chunks
+        id: package_chunks
+        if: steps.build_full_matrix.outputs.total_chunks > 0
+        shell: bash
+        run: |
+          BASE_ARTIFACT_NAME="assetfinder-chunks-package-${{ github.run_id }}"
+          PACKAGE_TAR_FILENAME="${BASE_ARTIFACT_NAME}.tar.gz"
+          echo "INFO: Creating tarball: $PACKAGE_TAR_FILENAME"
+          tar -czvf "$PACKAGE_TAR_FILENAME" chunks full_matrix.json
+          echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
+          echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
+      # STEP 4: Upload the artifact
+      - name: Upload Full Chunks Package
+        if: steps.build_full_matrix.outputs.total_chunks > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_chunks.outputs.base_artifact_name }}
+          path: ${{ steps.package_chunks.outputs.package_tar_filename }}
+          retention-days: 1
+
+  # This job is identical to your reference and needs no changes
+  distribute_and_trigger_secondary:
+    name: Distribute Work & Trigger Workers
+    needs: prepare_all_chunks_and_package
+    if: needs.prepare_all_chunks_and_package.outputs.total_chunks_count > 0
+    runs-on: ubuntu-latest
+    outputs:
+      primary_matrix_json: ${{ steps.calculate_distribution.outputs.primary_matrix }}
+      secondary_matrix_json: ${{ steps.calculate_distribution.outputs.secondary_matrix }}
+      tertiary_matrix_json: ${{ steps.calculate_distribution.outputs.tertiary_matrix }}
+    steps:
+      - name: Calculate Chunk Distribution for Accounts
+        id: calculate_distribution
+        shell: bash
+        run: |
+          ALL_CHUNKS_JSON='${{ needs.prepare_all_chunks_and_package.outputs.all_chunks_matrix_json }}'
+          TOTAL_CHUNKS=${{ needs.prepare_all_chunks_and_package.outputs.total_chunks_count }}
+          THRESHOLD=${{ env.DISTRIBUTION_THRESHOLD }}
+          if [ "$TOTAL_CHUNKS" -lt "$THRESHOLD" ]; then
+            PRIMARY_CHUNKS_JSON="$ALL_CHUNKS_JSON"
+            SECONDARY_CHUNKS_JSON="[]"
+            TERTIARY_CHUNKS_JSON="[]"
+          else
+            PRIMARY_PERCENT=${{ env.PRIMARY_PERCENTAGE }}
+            SECONDARY_PERCENT=${{ env.SECONDARY_PERCENTAGE }}
+            PRIMARY_CHUNK_COUNT=$(echo "($TOTAL_CHUNKS * $PRIMARY_PERCENT) / 100" | bc)
+            SECONDARY_CHUNK_COUNT=$(echo "($TOTAL_CHUNKS * $SECONDARY_PERCENT) / 100" | bc)
+            OFFSET_FOR_TERTIARY=$((PRIMARY_CHUNK_COUNT + SECONDARY_CHUNK_COUNT))
+            PRIMARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson limit "$PRIMARY_CHUNK_COUNT" '.[0:$limit]')
+            SECONDARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson offset "$PRIMARY_CHUNK_COUNT" --argjson limit "$SECONDARY_CHUNK_COUNT" '.[$offset : $offset+$limit]')
+            TERTIARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson offset "$OFFSET_FOR_TERTIARY" '.[$offset:]')
+          fi
+          
+          echo "primary_matrix=$PRIMARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+          echo "secondary_matrix=$SECONDARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+          echo "tertiary_matrix=$TERTIARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+      
+      # The rest of this job (preparing payloads and triggering) is complex but can be copied
+      # verbatim from your original workflow. Just ensure the 'workflow:' name is correct.
+      # For brevity, I'll show one trigger block. Repeat for tertiary.
+      
+      - name: Prepare Trigger Payload For Secondary
+        id: prepare_payload_secondary
+        if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
+        shell: bash
+        run: |
+          MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.secondary_matrix }}'
+          JSON_PAYLOAD=$(jq -cn \
+            --arg server_url "${{ github.server_url }}" \
+            --arg repo_owner "${{ github.repository_owner }}" \
+            --arg repo_name "${{ github.event.repository.name }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+            --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
+            '{
+              "primary_github_server_url": $server_url,
+              "primary_repo_owner": $repo_owner,
+              "primary_repo_name": $repo_name,
+              "primary_run_id": $run_id,
+              "chunk_package_artifact_name": $artifact_name,
+              "secondary_matrix_json": $matrix_as_a_string
+            }')
+          echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+      
+      - name: Trigger Secondary Account Workflow
+        if: steps.calculate_distribution.outputs.secondary_matrix != '[]'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: recurse.yml # IMPORTANT: This must match the workflow name in the secondary repo
+          repo: ${{ secrets.ACCOUNT2_REPO_OWNER }}/${{ secrets.ACCOUNT2_REPO_NAME }}
+          token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          inputs: ${{ steps.prepare_payload_secondary.outputs.json_string }}
+          ref: main
+      
+      # ... (Add identical 'Prepare' and 'Trigger' blocks for Tertiary Account) ...
+      #====================================================================
+      # ADD THE FIRST SLEEP STEP HERE
+      # ====================================================================
+      #- name: Add delay before triggering Tertiary Trigger worker
+       # if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        #run: |
+         # echo "Pausing for 30 seconds to space out worker triggers and avoid platform throttling..."
+          #sleep 30
+
+      - name: Add Delay Between API Triggers for Tertiary Account
+        run: |
+          echo "Pausing for 30 seconds to avoid API rate-limiting before triggering the Tertiary account..."
+          sleep 30
+
+      # ====================================================================
+      
+      - name: Prepare Trigger Payload For Tertiary
+        id: prepare_payload_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
+        shell: bash
+        run: |
+          MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.tertiary_matrix }}'
+          JSON_PAYLOAD=$(jq -cn \
+            --arg run_id "${{ github.run_id }}" \
+            '{
+              "primary_run_id": $run_id
+            }')
+             echo "Constructed JSON Payload: $JSON_PAYLOAD"
+             echo "json_string=$JSON_PAYLOAD" >> "$GITHUB_OUTPUT"
+           
+           JSON_PAYLOAD=$(jq -cn \
+             --arg server_url "${{ github.server_url }}" \
+             --arg repo_owner "${{ github.repository_owner }}" \
+             --arg repo_name "${{ github.event.repository.name }}" \
+             --arg run_id "${{ github.run_id }}" \
+             --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+             --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
+             '{
+               "primary_github_server_url": $server_url,
+               "primary_repo_owner": $repo_owner,
+               "primary_repo_name": $repo_name,
+               "primary_run_id": $run_id,
+               "chunk_package_artifact_name": $artifact_name,
+               "tertiary_matrix_json": $matrix_as_a_string 
+             }')
+          
+          echo "Constructed JSON Payload: $JSON_PAYLOAD"
+             # Set the constructed JSON string as an output of this step
+          echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+      
+      - name: DEBUG - Show Tertiary Inputs String
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
+        run: |
+          echo "DEBUG: Inputs for TERTIARY account:"
+          # echo "${{ steps.prepare_payload_tertiary.outputs.json_string }}"    
+     
+      - name: Trigger Tertiary Account Workflow
+        # This is a NEW step, a copy of the secondary trigger step for Account 3.
+        id: trigger_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_matrix != '[]'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: recurse.yml
+          repo: ${{ secrets.ACCOUNT3_REPO_OWNER }}/${{ secrets.ACCOUNT3_REPO_NAME }}
+          token: ${{ secrets.PAT_FOR_TERTIARY_ACCOUNT_REPO }}
+          inputs: ${{ steps.prepare_payload_tertiary.outputs.json_string }}
+          ref: main
+
+  run_primary_account_enumeration:
+    name: Run Recursive Enum (Primary Account)
+    needs: [prepare_all_chunks_and_package, distribute_and_trigger_secondary]
+    if: needs.prepare_all_chunks_and_package.outputs.total_chunks_count > 0 && needs.distribute_and_trigger_secondary.outputs.primary_matrix_json != '[]'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pcoder7/spider-puredns-actions:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJson(needs.distribute_and_trigger_secondary.outputs.primary_matrix_json) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          # Fetch full Git history so previous commits are available for comparison
+          fetch-depth: 0   
+          
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules & binaries
+        uses: actions/cache@v3
+        with:
+          path: |
+            $HOME/go/pkg/mod
+            ~/.cache/go-build
+            $HOME/go/bin
+          key: ${{ runner.os }}-go-cache-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-go-cache-
+    
+      - name: Download & Extract Chunks Package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}
+      - run: tar -xzvf *.tar.gz
+
+      - name: Run Assetfinder with GNU Parallel on Chunk
+        id: run_parallel
+        shell: bash
+        run: |
+          
+          CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
+          echo "Processing chunk '$CHUNK_FILE_PATH'..."
+          if [ ! -f "$CHUNK_FILE_PATH" ]; then
+            echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
+            
+          fi
+          
+          SUB_CHUNK_DIR="sub-chunks"
+          RAW_RESULTS_FILE="raw_subdomain_results.txt"
+          
+          # ─── PREP ──────────────────────────────────────────────────────────────────
+          # Ensure SUB_CHUNK_DIR is defined
+         
+          export SUB_CHUNK_DIR
+          # Clean & recreate directories
+          rm -rf "$SUB_CHUNK_DIR"
+          mkdir -p "$SUB_CHUNK_DIR" "${SUB_CHUNK_DIR}/raw_results"
+          
+          TOTAL_LINES=$(wc -l < "$CHUNK_FILE_PATH")
+          LINES_PER_SUB_CHUNK=$(awk -v t="$TOTAL_LINES" 'BEGIN { print int((t+4)/5) }')
+          echo "WORKER: Main chunk has $TOTAL_LINES lines. Splitting into 5 sub-chunks of up to $LINES_PER_SUB_CHUNK lines each."
+          
+          split -l "$LINES_PER_SUB_CHUNK" "$CHUNK_FILE_PATH" "${SUB_CHUNK_DIR}/sub_chunk_"
+                             
+          parallel -j 5 'findomain --file "{}" --external-subdomains --quiet --unique-output "${SUB_CHUNK_DIR}/raw_results/result_{#}.txt"' ::: ${SUB_CHUNK_DIR}/sub_chunk_*
+          
+          # ─── MERGE + DEDUPE ─────────────────────────────────────────────────────────
+          cat "$SUB_CHUNK_DIR/raw_results"/result_*.txt | sort -u > "$RAW_RESULTS_FILE"
+          echo "✅ All done. Consolidated into $RAW_RESULTS_FILE with $(wc -l < "$RAW_RESULTS_FILE") subdomains"
+         
+      - name: Install Tools
+        run: |
+          # Installing smap
+          if ! command -v smap >/dev/null; then
+            echo "Installing smap…"
+            go install -v github.com/s0md3v/smap/cmd/smap@latest
+          else
+            echo "smap already in cache"
+          fi    
+          # Installing inscope
+          if ! command -v inscope >/dev/null; then
+            echo "Installing inscope…"
+            go install -v github.com/tomnomnom/hacks/inscope@latest
+          else
+            echo "inscope already in cache"
+          fi    
+          
+          if ! command -v anew >/dev/null; then
+            echo "Installing anew…"
+            go install -v github.com/tomnomnom/anew@latest
+          else
+            echo "anew already in cache"
+          fi
+          
+          if ! command -v cut-cdn >/dev/null; then
+            echo "Installing cut-cdn…"
+            go install github.com/ImAyrix/cut-cdn@latest
+          else
+            echo "cut-cdn already in cache"
+          fi     
+
+          if ! command -v naabu >/dev/null; then
+            echo "Installing naabu…"
+            go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+          else
+            echo "naabu already in cache"
+          fi
+
+          pip3 install --no-cache-dir ipaddress
+          
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+          
+      # ====================================================================
+      # NEW STEP: PureDNS Resolution
+      # ====================================================================
+      - name: Resolve Discovered Subdomains with PureDNS
+        id: run_puredns
+        shell: bash
+        run: |
+          RAW_RESULTS_FILE="raw_subdomain_results.txt"
+          PUREDNS_FILE="puredns_file.txt"
+          RESOLVED_FILE="puredns_resolved.txt"
+          TMP_CLEANMASSDNS=$(mktemp)
+          MASSDNS="massdns.txt"
+          #WILDCARD_FILE="wildcard_sub.txt"
+          MASSDNS_FILE="massdns_file.txt"
+          
+          if [ ! -s "$RAW_RESULTS_FILE" ]; then
+            echo "INFO: Raw results file is empty. Nothing to resolve."
+            touch "$PUREDNS_FILE" # Create an empty file to prevent downstream errors
+            exit 0
+          fi
+
+          wget -qO resolvers.txt https://raw.githubusercontent.com/and0x00/resolvers.txt/refs/heads/main/resolvers.txt
+          
+          echo "INFO: Resolving subdomains using puredns..."
+          # The container image includes a list of public resolvers at /opt/resolvers.txt
+          puredns resolve "$RAW_RESULTS_FILE" \
+            -r resolvers.txt \
+            --rate-limit 3000 \
+            --skip-validation \
+            --skip-wildcard-filter \
+            --write "$PUREDNS_FILE" \
+            --write-massdns "$MASSDNS" \
+            --quiet >/dev/null 2>&1
+                               
+          echo "✅ PureDNS resolution complete. $(wc -l < "$PUREDNS_FILE") subdomains were successfully resolved."
+
+          cat "$PUREDNS_FILE" | inscope -s .scope > "$RESOLVED_FILE" || true
+
+          # echo "✅ PureDNS resolution complete. $(wc -l < "$WILDCARD_FILE") Wildcard subdomains found."
+
+          awk 'NF { sub(/\.$/,"",$1); print }' "$MASSDNS" > "$TMP_CLEANMASSDNS"
+
+          awk ' \
+          {gsub(/\r$/,"");sub(/^[ \t]+/,"");sub(/[ \t]+$/,"")} \
+          FNR==NR{if($0)patterns[++c]=$0;next} \
+          !setup{regex="";for(i=1;i<=c;i++){regex=regex (i>1?"|":"") "("patterns[i]")"};if(regex=="")regex="^\b$";setup=1} \
+          $2=="A" && $1~regex \
+          ' .scope "$TMP_CLEANMASSDNS" | anew -q "$MASSDNS_FILE"
+          
+          echo "✅ PureDNS resolution complete. $(wc -l < "$MASSDNS_FILE")  massdns found."     
+
+          rm -f "$TMP_CLEANMASSDNS" "$MASSDNS" "$PUREDNS_FILE"
+          
+          cat "$MASSDNS_FILE" | sort -u 
+          
+      - name: Map subdomains to ports with CDN filtering
+        id: map_subdomains_cdn
+        shell: bash
+        run: |
+          
+          trap '' SIGPIPE
+
+          MASSDNS_FILE="massdns_file.txt"
+          SMAP_FILE="smap.txt"
+          OUTPUT="subdomain_ports.txt"
+          
+          # create per‑runner temp files
+          TMP_IP2SUB=$(mktemp)
+          TMP_IP_ONLY=$(mktemp)
+          TMP_NONCDN=$(mktemp)
+          TMP_CDN=$(mktemp)
+          TMP_SMAP_NONCDN=$(mktemp)
+          TMP_RUSTSCAN=$(mktemp)
+
+          echo "▶ Cleaning & extracting A‑records from $MASSDNS_FILE…"
+          # IP SUBDOMAIN
+          awk '{ print $3, $1 }' "$MASSDNS_FILE" | sort -k1,1 > "$TMP_IP2SUB"
+
+          echo "▶ Pulling unique IPs…"
+          cut -d' ' -f1 "$TMP_IP2SUB" | sort -u > "$TMP_IP_ONLY"
+
+          echo "▶ Filtering non‑CDN IPs with cut-cdn…"
+          cat "$TMP_IP_ONLY" | cut-cdn -ua -t 50 -silent -o "$TMP_NONCDN"
+
+          echo "✅ All done. TMP_IP_ONLY contains $(wc -l < "$TMP_IP_ONLY") IP"
+
+          head -n5 "$TMP_IP_ONLY"
+
+          echo "==================================================================="
+
+          echo "✅ All done. TMP_NONCDN contains $(wc -l < "$TMP_NONCDN") IP"
+
+          head -n5 "$TMP_NONCDN"
+
+          echo "==================================================================="
+
+          echo "▶ Deriving CDN IP list…"
+          cat "$TMP_IP_ONLY" | anew -d "$TMP_NONCDN" > "$TMP_CDN"
+
+          echo "✅ All done. TMP_CDN contains $(wc -l < "$TMP_CDN") IP"
+
+          head -n5 "$TMP_CDN"
+
+          echo "==================================================================="
+
+          echo "▶ Running smap on non‑CDN IPs…"
+          
+          smap -iL "$TMP_NONCDN" -oP "$TMP_SMAP_NONCDN" || true
+          rustscan -a "$TMP_NONCDN" -p 80,443 --no-banner  -t 1000 --tries 1 -u 20000 --scan-order "Random"  -b 100 --greppable --accessible > "$TMP_RUSTSCAN" || true
+          
+          cat "$TMP_RUSTSCAN" | awk -F ' -> ' '{ gsub(/[\[\]]/, "", $2); n = split($2, p, ","); for(i=1;i<=n;i++) print $1 ":" p[i] }' | anew -q "$TMP_SMAP_NONCDN" || true
+          
+          
+
+          echo "✅ All done. TMP_SMAP_NONCDN contains $(wc -l < "$TMP_SMAP_NONCDN") IP" 
+
+          echo "==================================================================="
+          head -n50 "$TMP_SMAP_NONCDN"
+
+          echo "==================================================================="
+          
+          echo "▶ Merging non‑CDN and CDN IP lists into $SMAP_FILE…"
+          # TMP_SMAP_NONCDN has IP:PORT, TMP_CDN has bare IP
+          
+          cat "$TMP_SMAP_NONCDN" "$TMP_CDN" | sort -u > "$SMAP_FILE"
+
+          echo "✅ All done. SMAP_FILE contains $(wc -l < "$SMAP_FILE") IP" 
+
+          echo "==================================================================="
+          head -n50 "$SMAP_FILE"
+
+          echo "==================================================================="
+
+          echo "▶ Joining with $SMAP_FILE to produce subdomain:port or subdomain…"
+          awk -F: '
+            NF==2 { print $1, $2 }    # IP:PORT → IP PORT
+            NF==1 { print $1, ""  }   # bare IP → IP <empty>
+          ' "$SMAP_FILE" \
+            | sort -k1,1 \
+            | join - "$TMP_IP2SUB" \
+            | { 
+              awk '
+                # This guard clause ignores blank or malformed lines from the input.
+                NF >= 2 { 
+                  # Check if the line has 3 fields AND the second field contains only digits.
+                  # This is a more robust check than simply seeing if the field is not empty.
+                  # The regex /^[0-9]+$/ ensures field 2 is a valid port number.
+                  if (NF == 3 && $2 ~ /^[0-9]+$/) { 
+                    # If it has a port, print in SUBDOMAIN:PORT format.
+                    print $3 ":" $2 
+                  } else { 
+                    # Otherwise, print just the subdomain. The last field ($NF) is the most
+                    # reliable way to get the subdomain, as it works for both 2- and 3-field inputs.
+                    print $NF 
+                  } 
+                }
+              '       
+            } \
+            > "$OUTPUT"
+
+          echo "✅ Generated $OUTPUT (first 5 lines):"
+          head -n50 "$OUTPUT"
+
+          # cleanup
+          rm -f "$TMP_IP2SUB" "$TMP_IP_ONLY" "$TMP_NONCDN" "$TMP_CDN" "$TMP_SMAP_NONCDN" "$TMP_RUSTSCAN"   
+      # ====================================================================
+      # MOVED AND MODIFIED STEP: Sorting
+      # ====================================================================
+          
+      - name: Sort Resolved Results into Root Domain Folders
+        shell: bash
+        run: |
+          # This step now uses the output from puredns as its source
+          RESOLVED_FILE="puredns_resolved.txt"
+          #WILDCARD_FILE="wildcard_sub.txt"
+          MASSDNS_FILE="massdns_file.txt"
+          PORTS_INPUT_FILE="subdomain_ports.txt"
+        
+          echo "INFO: Sorting resolved results into root-domain specific files..."
+          mkdir -p results 
+          
+          if [ ! -s "$RESOLVED_FILE" ]; then
+            echo "INFO: PureDNS found no resolvable domains in this chunk."
+            exit 0
+          fi
+          
+          # First, find which root domains are present in our *resolved* results
+          dsieve -if "$RESOLVED_FILE" -f 2 | sort -u > temp_root_domains.txt
+          
+          # Now, loop through those root domains and extract their subdomains
+          while read -r parent; do
+            if [ -z "$parent" ]; then continue; fi
+            mkdir -p "results/$parent"
+            
+            # --- Original Logic for puredns results (unchanged) ---
+            outfile="results/$parent/puredns_results.txt"
+            echo "  -> Filtering puredns results for '$parent' into '$outfile'"
+            grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "$outfile" || true
+
+            # --- New Logic to sort the subdomain_ports.txt file ---
+            ports_outfile="results/$parent/subdomain_ports.txt"
+            echo "  -> Filtering port data for '$parent' into '$ports_outfile'"
+
+            # This grep command is the core of the solution. It finds lines in the ports file
+            # that belong to the current parent domain.
+            # The regex matches the parent domain when it is followed by either a colon OR the end of the line.
+            grep -E "(^|\\.)${parent//./\\.}(\:|\$)" --color=never "$PORTS_INPUT_FILE" | anew -q "$ports_outfile" || true
+            
+
+          done < temp_root_domains.txt
+          
+      - name: Compute SAFE_CHUNK (no slashes)
+        run: |
+          SAFE_CHUNK="${{ matrix.pair.chunk }}"
+          SAFE_CHUNK="$(echo "$SAFE_CHUNK" | tr '/' '_')"
+          echo "SAFE_CHUNK=$SAFE_CHUNK" >> $GITHUB_ENV    
+          
+      - name: Upload Primary Account Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-results-primary-${{ env.SAFE_CHUNK }}
+          path: results/
+          retention-days: 1
+
+
+  merge_results:
+    name: Merge All Distributed Results
+    runs-on: ubuntu-latest
+    # This should be triggered after all worker workflows have had time to complete.
+    # In a single-workflow setup, it would need `run_primary_account_enumeration`.
+    # In a multi-workflow setup, it would be triggered via `repository_dispatch`.
+    needs: run_primary_account_enumeration 
+    if: always() 
+    outputs:
+      has_results: ${{ steps.consolidate.outputs.has_results }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Cache Go modules & binaries
+        uses: actions/cache@v3
+        with:
+          path: |
+            $HOME/go/pkg/mod
+            ~/.cache/go-build
+            $HOME/go/bin
+          key: ${{ runner.os }}-go-cache-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-go-cache-
+         
+      - name: Install Tools
+        run: |
+          # Installing anew
+          if ! command -v anew >/dev/null; then
+            echo "Installing anew…"
+            go install -v github.com/tomnomnom/anew@latest
+          else
+            echo "anew already in cache"
+          fi    
+          
+      - name: Download all result artifacts from all accounts
+        uses: actions/download-artifact@v4
+        with:
+          # This pattern correctly finds artifacts from primary, secondary, and tertiary workers
+          pattern: 'recon-results-*'
+          path: temp-aggregated-results
+          merge-multiple: true
+
+      - name: Consolidate all results into root domain folders
+        id: consolidate
+        shell: bash
+        run: |
+          # This command ensures that the script will exit immediately if any command fails.
+                
+          # Create the destination directory. The -p flag prevents errors if it already exists.
+          mkdir -p final_results
+          
+          # This is a critical guard clause. It checks if artifacts were actually downloaded.
+          # If not, it exits cleanly (exit code 0) instead of erroring out later.
+          if [ ! -d "temp-aggregated-results" ] || [ -z "$(ls -A temp-aggregated-results)" ]; then
+            echo "::warning:: No result artifacts were found from any account. Nothing to merge."
+            echo "has_results=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "INFO: Aggregating all downloaded results..."
+          
+          # --- STAGE 1: Aggregate puredns_results.txt files ---
+          # This 'for' loop is robust and not a pipeline, which PREVENTS SIGPIPE/Broken Pipe errors.
+          for filepath in $(find temp-aggregated-results -type f -name "puredns_results.txt"); do
+            parent_domain=$(basename "$(dirname "$filepath")")
+            dest_file="final_results/$parent_domain/puredns_results.txt"
+            
+            mkdir -p "final_results/$parent_domain"
+            # Simple, fast append. All variables are quoted to handle any special characters.
+            cat "$filepath" >> "$dest_file"
+          done
+
+          # --- STAGE 2: Aggregate subdomain_ports.txt files ---
+          echo "INFO: Aggregating subdomain port data..."
+          # This loop is identical in structure and is also safe from pipe errors.
+          for filepath in $(find temp-aggregated-results -type f -name "subdomain_ports.txt"); do
+            parent_domain=$(basename "$(dirname "$filepath")")
+            dest_file="final_results/$parent_domain/subdomain_ports.txt"
+
+            mkdir -p "final_results/$parent_domain"
+            cat "$filepath" >> "$dest_file"
+          done
+
+          # --- STAGE 3: Final De-duplication ---
+          echo "INFO: De-duplicating all aggregated files..."
+          # This loop runs on the final aggregated files.
+          for final_file in $(find final_results -type f -name "*.txt"); do
+              # 'sort -u -o' is the correct, safe way to sort a file in-place.
+              # It avoids the race condition of 'sort file > file'.
+              sort -u -o "$final_file" "$final_file"
+          done
+         
+          # Final guard clause to check if the process resulted in any actual data.
+          if [ -z "$(ls -A final_results)" ]; then
+            echo "::warning:: Result artifacts were downloaded, but they contained no valid data to merge."
+            echo "has_results=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has_results=true" >> $GITHUB_OUTPUT
+          echo "✅ Successfully consolidated results from all accounts."
+          ls -R final_results
+
+      - name: Upload Final Consolidated Artifact
+        if: steps.consolidate.outputs.has_results == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-recon-results
+          path: final_results/
+          retention-days: 1
+
+# ====================================================================
+# This job also remains unchanged. It correctly consumes the artifact
+# from the merge_results job.
+# ====================================================================
+  commit_all_results:
+    name: Commit All Results
+    needs: merge_results 
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download the single consolidated results artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: consolidated-recon-results
+          path: final_results
+  
+      - name: Organize and Push to store-recon    
+        shell: bash
+        env:
+          STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
+          STORE: ${{ secrets.STORE }}
+        run: |
+          # Fails the script immediately if any command has a non-zero exit code.
+          
+          
+          # Define the path to the downloaded artifact results for clarity.
+          RESULTS_DIR="${GITHUB_WORKSPACE}/final_results"
+          
+          # Guard clause: Exit cleanly if there are no results to process.
+          if [ ! -d "$RESULTS_DIR" ] || [ -z "$(ls -A "$RESULTS_DIR")" ]; then
+            echo "::warning:: Results directory is empty or does not exist. Nothing to commit."
+            exit 0
+          fi
+          
+          echo "Cloning ${STORE} to commit results..."
+          # Configure the git identity for the upcoming commit.
+          git config --global user.name "Assetfinder Bot"
+          git config --global user.email "actions-bot@users.noreply.github.com"
+          
+          # Create a secure temporary directory and clone the repository into it.
+          TMP_DIR="$(mktemp -d)"
+          git clone "https://x-access-token:${STORE_RECON_PAT}@github.com/${ACCOUNT2_USERNAME}/${STORE}.git" "$TMP_DIR"
+          # Change the current directory to be inside the cloned repository.
+          cd "$TMP_DIR" 
+          
+          echo "Merging new consolidated results into the repository..."
+          # Loop over each domain directory found in the artifact.
+          for domain_dir in "${RESULTS_DIR}"/*; do
+            # Skip any item that is not a directory.
+            if [ ! -d "$domain_dir" ]; then continue; fi
+            
+            domain_name=$(basename "$domain_dir")
+            dest_repo_dir="results/$domain_name"
+            # Safely ensure the destination directory exists.
+            mkdir -p "$dest_repo_dir"
+
+            # --- MERGE BLOCK 1: puredns_results.txt -> all_subdomains.txt ---
+            source_puredns_file="$domain_dir/puredns_results.txt"
+            dest_all_subs_file="$dest_repo_dir/all_subdomains.txt"
+            
+            # Process only if the source file exists and has content.
+            if [ -s "$source_puredns_file" ]; then
+              echo "  -> Merging puredns results into '$dest_all_subs_file'"
+              temp_merged_file_1=$(mktemp)
+              if [ -f "$dest_all_subs_file" ]; then
+                # Merge existing and new data.
+                cat "$source_puredns_file" "$dest_all_subs_file" | sort -u > "$temp_merged_file_1"
+              else
+                # =================== BUG FIX IS HERE ===================
+                # Create new file from source. Using the correct variable now.
+                sort -u "$source_puredns_file" > "$temp_merged_file_1"
+                # =======================================================
+              fi
+              # Safely replace the old file with the new merged version.
+              mv "$temp_merged_file_1" "$dest_all_subs_file"
+            else
+              echo "  -> INFO: Skipping merge for '$dest_all_subs_file' as source 'puredns_results.txt' is empty or missing."
+            fi
+            
+            # --- MERGE BLOCK 2: subdomain_ports.txt -> puredns_result.txt ---
+            source_ports_file="$domain_dir/subdomain_ports.txt"
+            dest_puredns_file="$dest_repo_dir/puredns_result.txt"
+            
+            # Process only if this second source file exists and has content.
+            if [ -s "$source_ports_file" ]; then
+              echo "  -> Merging port data into '$dest_puredns_file'"
+              temp_merged_file_2=$(mktemp)
+              if [ -f "$dest_puredns_file" ]; then
+                # Merge existing and new data.
+                cat "$source_ports_file" "$dest_puredns_file" | sort -u > "$temp_merged_file_2"
+              else
+                # Create new file from source. This block was already correct.
+                sort -u "$source_ports_file" > "$temp_merged_file_2"
+              fi
+              # Safely replace the old file with the new merged version.
+              mv "$temp_merged_file_2" "$dest_puredns_file"
+            else
+              echo "  -> INFO: Skipping merge for '$dest_puredns_file' as source 'subdomain_ports.txt' is empty or missing."
+            fi
+          done
+          
+          echo "--- Checking Git Status Before Commit ---"
+          git status
+          echo "---------------------------------------"
+          
+          # Robustly check if any files have actually changed.
+          if git diff --cached --quiet && git diff --quiet; then
+            echo "No new unique data to commit in ${STORE}."
+            exit 0
+          fi
+          
+          echo "Committing and pushing changes to ${STORE}..."
+          # Stage, commit, and push the changes.
+          git add results/
+          git commit -m "feat: Add new assets from distributed recon scan (Run ID ${{ github.run_id }})"
+          git push -v origin main
+          
+          echo "✅ Successfully pushed new consolidated results to ${STORE}."
+
+
+  trigger_http_multiple_three:
+    name: Trigger http multiple three
+    needs: [commit_all_results]
+    
+    if: success() 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger next workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: httpx_dispatch_three.yml
+          repo: Pcoder7/http-multiple-three
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
+          
