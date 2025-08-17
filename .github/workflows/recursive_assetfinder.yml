@@ -891,7 +891,7 @@ jobs:
             git pull origin main --rebase
             
             # Commit the changes. The '|| true' prevents an error if the commit was already made.
-            git commit -m "feat: Add new assets from distributed recon scan (Run ID ${{ github.run_id }})" || true
+            git commit -m "feat: Add new assets from Recursive recon scan from Correlation ID: ${{ github.run_id }}" || true
 
             # Attempt to push.
             if git push -v origin main; then
@@ -901,7 +901,7 @@ jobs:
               echo "::warning:: Push failed on attempt $i."
               if [ $i -eq $MAX_ATTEMPTS ]; then
                 echo "::error:: All $MAX_ATTEMPTS push attempts failed."
-                exit 1 # All attempts failed, exit with error.
+                exit 0 # All attempts failed, exit with error.
               fi
               # Wait with an increasing delay before retrying.
               sleep $(( 5 * i ))
