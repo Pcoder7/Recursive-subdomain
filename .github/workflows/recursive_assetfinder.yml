@@ -805,6 +805,7 @@ jobs:
           STORE_RECON_PAT: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           ACCOUNT2_USERNAME: ${{ secrets.ACCOUNT2_REPO_OWNER }}
           STORE: ${{ secrets.STORE }}
+          CORRELATION_ID: ${{ github.run_id }}
         run: |
           set -e
           
@@ -891,7 +892,7 @@ jobs:
             git pull origin main --rebase
             
             # Commit the changes. The '|| true' prevents an error if the commit was already made.
-            git commit -m "feat: Add new assets from Recursive recon scan from Correlation ID: ${{ github.run_id }}" || true
+            git commit -m "feat: Add new assets from Recursive recon scan from Correlation ID: ${CORRELATION_ID}" || true
 
             # Attempt to push.
             if git push -v origin main; then
