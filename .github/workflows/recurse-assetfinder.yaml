@@ -1,7 +1,7 @@
 name: Distributed Recursive Enumeration
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # For creating matrix.json and artifacts
@@ -37,8 +37,12 @@ jobs:
       all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
       total_chunks_count: ${{ steps.build_full_matrix.outputs.total_chunks }}
       chunk_package_artifact_name: "assetfinder-chunks-package-${{ github.run_id }}"
-
+    if: ${{ github.actor == 'Pcoder7' }}
     steps:
+      - name: Log trigger info
+        run: |
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Run id: ${{ github.run_id }}"    
       - name: Checkout repository
         uses: actions/checkout@v3
 
