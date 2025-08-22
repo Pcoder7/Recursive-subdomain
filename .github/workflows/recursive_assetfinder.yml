@@ -910,7 +910,7 @@ jobs:
       - name: Trigger next workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: httpx_dispatch_three.yml
+          workflow: http_dispatch_three.yml
           repo: Pcoder7/http-multiple-three
           token: ${{ secrets.PAT_TOKEN }}
           ref: main
