@@ -9,7 +9,7 @@ permissions:
 
 env:
   # --- Chunking and Distribution Configuration ---
-  LINES_PER_CHUNK: 22             # MODIFIED: As requested for assetfinder seeds
+  LINES_PER_CHUNK: 30             # MODIFIED: As requested for assetfinder seeds
   DISTRIBUTION_THRESHOLD: 20      # The minimum total chunks to trigger 3-way distribution
   PRIMARY_PERCENTAGE: 55          # 45% for the primary account
   SECONDARY_PERCENTAGE: 35        # 40% for the secondary account
