@@ -787,6 +787,7 @@ jobs:
   commit_all_results:
     name: Commit All Results
     needs: merge_results 
+    if: always() && needs.merge_results.outputs.has_results == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -904,7 +905,7 @@ jobs:
     name: Trigger http multiple three
     needs: [commit_all_results]
     
-    if: success() 
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Trigger next workflow
