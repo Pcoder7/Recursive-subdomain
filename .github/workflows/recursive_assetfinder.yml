@@ -668,13 +668,10 @@ jobs:
   merge_results:
     name: Merge All Distributed Results
     runs-on: ubuntu-latest
-    # This should be triggered after all worker workflows have had time to complete.
-    # In a single-workflow setup, it would need `run_primary_account_enumeration`.
-    # In a multi-workflow setup, it would be triggered via `repository_dispatch`.
     needs: run_primary_account_enumeration 
     if: always() 
     outputs:
-      has_results: ${{ steps.consolidate.outputs.has_results }}
+      has_results: ${{ steps.check_artifacts.outputs.found }}    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -713,6 +710,18 @@ jobs:
           path: temp-aggregated-results
           merge-multiple: true
 
+      - name: Check if artifacts were downloaded
+        id: check_artifacts
+        shell: bash
+        run: |
+          if [ -d "temp-aggregated-results" ] && [ -n "$(ls -A temp-aggregated-results)" ]; then
+            echo "-> Artifacts found. Proceeding with merge."
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "-> No artifacts found to merge. Skipping the rest of this job."
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+          
       - name: Consolidate all results into root domain folders
         id: consolidate
         shell: bash
