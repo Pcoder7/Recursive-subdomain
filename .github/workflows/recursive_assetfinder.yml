@@ -17,7 +17,7 @@ env:
   STORE_REPO_NAME: ${{ secrets.STORE }}
   # --- Account 2 Details (for triggering and committing) ---
   ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER }}
-  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME  }} 
+  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT2_REPO_NAME  }} 
    # The 'store-recon' repo name
 
   # --- Account 3 Details ---
@@ -502,24 +502,31 @@ jobs:
       - name: Sort Resolved Results into Root Domain Folders
         shell: bash
         run: |
-          RESOLVED_FILE="puredns_resolved.txt"
-          MASSDNS_FILE="massdns_file.txt" 
-          mkdir -p results 
-          if [ ! -s "$RESOLVED_FILE" ]; then echo "INFO: No resolvable domains in this chunk."; exit 0; fi
+        
+          RESOLVED_FILE="puredns_resolved.txt" 
+          MASSDNS_FILE="massdns_file.txt"
+          mkdir -p results
           
-          dsieve -if "$RESOLVED_FILE" -f 2 | sort -u > temp_root_domains.txt
+          # Create a combined list of all subdomains from both files to find all possible root domains
+          cat "$RESOLVED_FILE" 2>/dev/null > combined_subdomains.txt
+          awk '{print $1}' "$MASSDNS_FILE" 2>/dev/null >> combined_subdomains.txt
+          if [ ! -s "combined_subdomains.txt" ]; then echo "INFO: No resolvable data in this chunk."; exit 0; fi
+          
+          # Extract unique root domains from the combined list
+          dsieve -if "combined_subdomains.txt" -f 2 | sort -u > temp_root_domains.txt
           
           while read -r parent; do
-            if [ -z "$parent" ]; then continue; fi
-            mkdir -p "results/$parent"
+            if [ -z "$parent" ]; then continue; fi; mkdir -p "results/$parent"
             
-            # Logic for puredns results
-            outfile="results/$parent/puredns_results.txt"
-            grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "$outfile" || true
+            # Logic for puredns results (only if the source file has content)
+            if [ -s "$RESOLVED_FILE" ]; then
+              grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "results/$parent/puredns_results.txt" || true
+            fi
             
-            # ADDED: New logic to sort the massdns file
-            massdns_outfile="results/$parent/massdns_file.txt"
-            grep -E "(^|\\.)${parent//./\\.}(\s|\$)" --color=never "$MASSDNS_FILE" | anew -q "$massdns_outfile" || true
+            # Logic for massdns file (only if the source file has content)
+            if [ -s "$MASSDNS_FILE" ]; then
+              grep -E "(^|\\.)${parent//./\\.}(\s|\$)" --color=never "$MASSDNS_FILE" | anew -q "results/$parent/massdns_file.txt" || true
+            fi
           done < temp_root_domains.txt
           
       - name: Compute SAFE_CHUNK (no slashes)
@@ -695,6 +702,15 @@ jobs:
                 mv "$temp_merged_file_1" "$dest_all_subs_file"
               fi
               
+              # FIX: Added MERGE BLOCK 2 for massdns with full sanitization
+              
+              source_massdns_file="$domain_dir/massdns_file.txt"; 
+              dest_massdns_file="$dest_repo_dir/massdns.txt"
+              if [ -s "$source_massdns_file" ]; then
+                <"$source_massdns_file" tr -d '\0'|grep '[[:alnum:]]'|sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'|sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g" > tmp.txt && mv tmp.txt "$source_massdns_file"
+                cat "$source_massdns_file" "$dest_massdns_file" 2>/dev/null | sort -u > tmp.txt && mv tmp.txt "$dest_massdns_file"
+              fi
+            done          
 
               
             
@@ -759,20 +775,23 @@ jobs:
           echo "::error:: All $MAX_ATTEMPTS push attempts failed. The job will pass but the commit was NOT pushed."
           exit 0 
           
-  trigger_http_multiple_three:
-    name: Trigger http multiple three
-    needs: [commit_all_results]
-    
-    if: always()
+  trigger_port_scanning:
+    name: Trigger Port Scanning Workflow
+    needs: commit_all_results
+    if: success()
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger next workflow
+      - name: Trigger RustScan Workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: http_dispatch_three.yml
-          repo: Pcoder7/http-multiple-three
+          workflow: Distributed Port Scanning (RustScan)
+          repo: ${{ github.repository }}
           token: ${{ secrets.PAT_TOKEN }}
           ref: main
-
-          inputs: '{ "run_id": "${{ github.run_id }}", "results_repo": "${{ github.repository }}" }'
+          inputs: >
+            {
+              "correlation_id": "${{ github.run_id }}",
+              "results_repo_owner": "${{ env.ACCOUNT2_REPO_OWNER }}",
+              "results_repo_name": "${{ env.STORE_REPO_NAME }}"
+            }
           
