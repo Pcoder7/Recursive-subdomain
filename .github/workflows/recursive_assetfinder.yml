@@ -781,11 +781,11 @@ jobs:
     if: success()
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger RustScan Workflow
+      - name: Trigger next Rustyscan Workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Distributed Port Scanning (RustScan)
-          repo: ${{ github.repository }}
+          workflow: rusty_scan.yml
+          repo: Pcoder7/Rustyy_scan
           token: ${{ secrets.PAT_TOKEN }}
           ref: main
           inputs: >
