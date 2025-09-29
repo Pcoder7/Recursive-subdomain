@@ -9,7 +9,7 @@ permissions:
 
 env:
   # --- Chunking and Distribution Configuration ---
-  LINES_PER_CHUNK: 15            # MODIFIED: As requested for assetfinder seeds
+  LINES_PER_CHUNK: 12            # MODIFIED: As requested for assetfinder seeds
   DISTRIBUTION_THRESHOLD: 20      # The minimum total chunks to trigger 3-way distribution
   PRIMARY_PERCENTAGE: 40          # 45% for the primary account
   SECONDARY_PERCENTAGE: 35        # 40% for the secondary account
@@ -121,7 +121,7 @@ jobs:
             
             # Tier 2: Random sample of the mid-tier
             echo "  -> Getting a random 150 sample from the mid-tier (ranks 501-1000)..."
-            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 1000 | tail -n 500 | shuf | head -n 150 | anew -q "$TEMP_SEED_LIST_DOMAIN"
+            dsieve -if "$TEMP_ROOT_LIST" -f 3 -top 1000 | tail -n 500 | shuf | head -n 70 | anew -q "$TEMP_SEED_LIST_DOMAIN"
             cat "$TEMP_SEED_LIST_DOMAIN" >> final-subdomain-list.txt
           done < unique_root_domains.txt
           
