@@ -567,38 +567,7 @@ jobs:
                                 grep -E "(^|\\.)${parent//./\\.}(\s|\$)" --color=never "$MASSDNS_FILE" | anew -q "results/$parent/massdns_file.txt" || true
                         fi
                 done < temp_root_domains.txt
-
-
-          
-      - name: Sort Resolved Results into Root Domain Folders
-        shell: bash
-        run: |
-        
-          RESOLVED_FILE="puredns_resolved.txt" 
-          MASSDNS_FILE="massdns_file.txt"
-          mkdir -p results
-          
-          # Create a combined list of all subdomains from both files to find all possible root domains
-          cat "$RESOLVED_FILE" 2>/dev/null > combined_subdomains.txt
-          awk '{print $1}' "$MASSDNS_FILE" 2>/dev/null >> combined_subdomains.txt
-          if [ ! -s "combined_subdomains.txt" ]; then echo "INFO: No resolvable data in this chunk."; exit 0; fi
-          
-          # Extract unique root domains from the combined list
-          dsieve -if "combined_subdomains.txt" -f 2 | sort -u > temp_root_domains.txt
-          
-          while read -r parent; do
-            if [ -z "$parent" ]; then continue; fi; mkdir -p "results/$parent"
-            
-            # Logic for puredns results (only if the source file has content)
-            if [ -s "$RESOLVED_FILE" ]; then
-              grep -E "(^|\\.)${parent//./\\.}(\$)" --color=never "$RESOLVED_FILE" | anew -q "results/$parent/puredns_results.txt" || true
-            fi
-            
-            # Logic for massdns file (only if the source file has content)
-            if [ -s "$MASSDNS_FILE" ]; then
-              grep -E "(^|\\.)${parent//./\\.}(\s|\$)" --color=never "$MASSDNS_FILE" | anew -q "results/$parent/massdns_file.txt" || true
-            fi
-          done < temp_root_domains.txt
+     
           
       - name: Compute SAFE_CHUNK (no slashes)
         run: |
